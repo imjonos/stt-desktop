@@ -8,6 +8,11 @@ def build():
     system = platform.system()
     sep = ';' if system == 'Windows' else ':'
 
+    if system == 'Darwin':
+        cmd = ['pyinstaller', '--noconfirm', 'STT Desktop.spec']
+        subprocess.run(cmd, check=True)
+        return
+
     icon_option = ''
     if system == 'Windows':
         icon_option = '--icon=assets/icon.ico'
@@ -19,6 +24,7 @@ def build():
         '--windowed',
         '--onefile',
         '--name', 'STT Desktop',
+        '--collect-data', 'whisper',
         '--add-data', f'assets{sep}assets',
         '--add-data', f'prompt.md{sep}.',
         icon_option,
