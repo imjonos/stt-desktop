@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import subprocess
 
 
@@ -23,6 +24,13 @@ def build():
         icon_option,
         'app/main.py'
     ]
+
+    ffmpeg_path = shutil.which('ffmpeg')
+    if ffmpeg_path:
+        cmd.extend(['--add-binary', f'{ffmpeg_path}{sep}.'])
+        print(f'Bundling ffmpeg: {ffmpeg_path}')
+    else:
+        print('ffmpeg not found in PATH; building without bundled ffmpeg.')
 
     cmd = [arg for arg in cmd if arg.strip()]
     subprocess.run(cmd, check=True)

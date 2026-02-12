@@ -4,8 +4,10 @@ import threading
 import tempfile
 import time
 import platform
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv, set_key
 
@@ -23,6 +25,7 @@ import pyperclip
 from pynput import keyboard
 
 APP_NAME = "STT Desktop"
+LOGGER = logging.getLogger("stt_desktop")
 
 DEFAULT_HOTKEY = "<ctrl>+<cmd>+s"
 
@@ -37,16 +40,10 @@ class AppConfig:
 
 def get_runtime_storage_paths() -> tuple[Path, Path]:
     if getattr(sys, "frozen", False):
-        executable_path = Path(sys.executable).resolve()
-        if platform.system() == "Darwin":
-            # Inside a macOS .app bundle:
-            # <App>.app/Contents/MacOS/<binary> -> use Contents/Resources
-            base_dir = executable_path.parent.parent / "Resources"
-        else:
-            # Windows/Linux frozen app: keep files next to executable
-            base_dir = executable_path.parent
+        base_dir = Path.home() / ".stt-desktop"
+        base_dir.mkdir(parents=True, exist_ok=True)
     else:
-        # Dev mode: keep files in project root
+        # IDE/console mode: keep files in project root.
         base_dir = Path(__file__).resolve().parent.parent
 
     return base_dir / ".env", base_dir / "prompt.md"
@@ -78,6 +75,103 @@ def resolve_app_icon_path() -> Path | None:
         if path.exists():
             return path
     return None
+
+
+def configure_bundled_ffmpeg():
+    if not getattr(sys, "frozen", False):
+        return
+
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.extend(
+            [
+                Path(meipass) / "ffmpeg",
+                Path(meipass) / "ffmpeg.exe",
+            ]
+        )
+
+    exe_dir = Path(sys.executable).resolve().parent
+    candidates.extend(
+        [
+            exe_dir / "ffmpeg",
+            exe_dir / "ffmpeg.exe",
+        ]
+    )
+
+    ffmpeg_path = next((p for p in candidates if p.exists()), None)
+    if not ffmpeg_path:
+        return
+
+    os.environ["FFMPEG_BINARY"] = str(ffmpeg_path)
+    os.environ["IMAGEIO_FFMPEG_EXE"] = str(ffmpeg_path)
+    current_path = os.environ.get("PATH", "")
+    ffmpeg_dir = str(ffmpeg_path.parent)
+    if ffmpeg_dir not in current_path.split(os.pathsep):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + current_path
+
+
+def get_home_app_dir() -> Path:
+    app_dir = Path.home() / ".stt-desktop"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    return app_dir
+
+
+def get_runtime_app_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def configure_error_logging():
+    if LOGGER.handlers:
+        return
+
+    LOGGER.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    log_paths = [
+        get_home_app_dir() / "app-errors.log",
+        get_runtime_app_dir() / "app-errors.log",
+    ]
+
+    for log_path in log_paths:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_path, encoding="utf-8")
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(formatter)
+            LOGGER.addHandler(handler)
+        except Exception:
+            # Keep app running even if a log file path is not writable.
+            pass
+
+    LOGGER.info("Logging initialized")
+
+
+def get_whisper_cache_dir() -> Path:
+    cache_dir = Path.home() / ".stt-desktop" / "whisper-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def resolve_local_whisper_checkpoint(model_name: str, cache_dir: Path) -> str:
+    model_candidate = Path(model_name)
+    if model_candidate.is_file():
+        return str(model_candidate)
+
+    if model_name in whisper._MODELS:
+        model_url = whisper._MODELS[model_name]
+        filename = Path(urlparse(model_url).path).name
+        checkpoint = cache_dir / filename
+        if checkpoint.is_file():
+            return str(checkpoint)
+        raise RuntimeError(
+            f"Whisper model '{model_name}' not found in cache: {checkpoint}"
+        )
+
+    raise RuntimeError(
+        f"Unknown Whisper model '{model_name}'. Use known name or local checkpoint path."
+    )
 
 
 class Recorder:
@@ -203,12 +297,19 @@ class MainWindow(QtWidgets.QWidget):
         self.hint_label = QtWidgets.QLabel("Горячая клавиша: Ctrl+Cmd+S")
         self.hint_label.setAlignment(QtCore.Qt.AlignCenter)
 
+        self.error_box = QtWidgets.QPlainTextEdit()
+        self.error_box.setReadOnly(True)
+        self.error_box.setPlaceholderText("Ошибки будут отображаться здесь")
+        self.error_box.setFixedHeight(90)
+
         recording_layout.addStretch(1)
         recording_layout.addWidget(self.status_label)
         recording_layout.addSpacing(20)
         recording_layout.addWidget(self.action_button)
         recording_layout.addSpacing(12)
         recording_layout.addWidget(self.hint_label)
+        recording_layout.addSpacing(10)
+        recording_layout.addWidget(self.error_box)
         recording_layout.addStretch(2)
 
         self.settings_page = QtWidgets.QWidget()
@@ -297,8 +398,16 @@ class MainWindow(QtWidgets.QWidget):
             self.prompt_input.toPlainText().strip(),
         )
 
+    def set_error_text(self, text: str):
+        self.error_box.setPlainText(text)
+
+    def clear_error_text(self):
+        self.error_box.clear()
+
 
 class AppController(QtCore.QObject):
+    ui_error = QtCore.Signal(str)
+
     def __init__(self, config: AppConfig, window: MainWindow):
         super().__init__()
         self.config = config
@@ -312,6 +421,7 @@ class AppController(QtCore.QObject):
 
         self.window.start_stop.connect(self.toggle_recording)
         self.window.apply_settings.connect(self.save_settings)
+        self.ui_error.connect(self._apply_error_to_ui)
 
     def start(self):
         self._start_hotkey()
@@ -319,7 +429,12 @@ class AppController(QtCore.QObject):
 
     def _load_whisper_async(self):
         def _load():
-            self.whisper_model = whisper.load_model("base")
+            try:
+                cache_dir = get_whisper_cache_dir()
+                checkpoint = resolve_local_whisper_checkpoint("base", cache_dir)
+                self.whisper_model = whisper.load_model(checkpoint)
+            except Exception as e:
+                self._report_error(f"Ошибка загрузки Whisper: {e}", with_trace=True)
         t = threading.Thread(target=_load, daemon=True)
         t.start()
 
@@ -332,7 +447,7 @@ class AppController(QtCore.QObject):
             self._hotkey_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_recording})
             self._hotkey_listener.start()
         except Exception as e:
-            self.window.status_label.setText(f"Ошибка hotkey: {e}")
+            self._report_error(f"Ошибка hotkey: {e}", with_trace=True)
 
     def toggle_recording(self):
         if self.is_processing:
@@ -347,8 +462,9 @@ class AppController(QtCore.QObject):
             self.recorder.start()
             self.is_recording = True
             self.window.set_recording(True)
+            self.window.clear_error_text()
         except Exception as e:
-            self.window.status_label.setText(f"Ошибка записи: {e}")
+            self._report_error(f"Ошибка записи: {e}", with_trace=True)
 
     def _stop_recording(self):
         audio = self.recorder.stop()
@@ -357,11 +473,11 @@ class AppController(QtCore.QObject):
             self.window.set_idle()
             return
         if not self.config.gigachat_key:
-            self.window.status_label.setText("Укажите API ключ GigaChat в настройках")
+            self._report_error("Укажите API ключ GigaChat в настройках")
             self.window.set_idle()
             return
         if self.whisper_model is None:
-            self.window.status_label.setText("Модель загружается, попробуйте еще раз")
+            self._report_error("Модель загружается или не загружена. Проверьте лог ошибок.")
             self.window.set_idle()
             return
         self.is_processing = True
@@ -390,12 +506,13 @@ class AppController(QtCore.QObject):
         self.is_processing = False
         self.is_audio_processing = False
         self.window.set_idle()
+        self.window.clear_error_text()
         self.thread.quit()
 
     def _on_error(self, msg: str):
         self.is_processing = False
         self.is_audio_processing = False
-        self.window.status_label.setText(f"Ошибка: {msg}")
+        self._report_error(f"Ошибка: {msg}")
         self.window.action_button.setEnabled(True)
         self.window.set_idle()
         self.thread.quit()
@@ -424,7 +541,7 @@ class AppController(QtCore.QObject):
                     controller.release(keyboard.KeyCode.from_char('v'))
             time.sleep(0.1)
         except Exception as e:
-            self.window.status_label.setText("✅ Текст скопирован! Нажмите Ctrl+V")
+            self._report_error("Текст скопирован, вставьте вручную Cmd/Ctrl+V")
         finally:
             try:
                 pyperclip.copy(previous)
@@ -468,6 +585,18 @@ class AppController(QtCore.QObject):
                 self.window.set_settings_status("Настройки сохранены", True)
         except Exception as e:
             self.window.set_settings_status(f"Ошибка сохранения: {e}", False)
+            self._report_error(f"Ошибка сохранения: {e}", with_trace=True)
+
+    def _report_error(self, message: str, with_trace: bool = False):
+        self.ui_error.emit(message)
+        if with_trace:
+            LOGGER.exception(message)
+        else:
+            LOGGER.error(message)
+
+    def _apply_error_to_ui(self, message: str):
+        self.window.status_label.setText(message)
+        self.window.set_error_text(message)
 
 
 def load_config() -> AppConfig:
@@ -487,6 +616,9 @@ def load_config() -> AppConfig:
 
 
 def main():
+    configure_error_logging()
+    configure_bundled_ffmpeg()
+
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
@@ -501,6 +633,7 @@ def main():
     try:
         config = load_config()
     except Exception as e:
+        LOGGER.exception("Configuration load failed")
         QtWidgets.QMessageBox.critical(window, APP_NAME, str(e))
         return
 
