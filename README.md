@@ -1,37 +1,65 @@
-# STT Desktop (MVP)
+# STT Desktop
 
 Кроссплатформенное десктоп-приложение на Python:
-- Горячая клавиша для записи
+- Глобальная горячая клавиша для записи
 - Локальный Whisper для STT
-- Обработка текста через GigaChat
+- Постобработка текста через GigaChat
 - Вставка результата в активное поле (Cmd+V / Ctrl+V)
 
 ## Быстрый старт
 
 1) Установите зависимости
-```
+```bash
 pip install -r requirements.txt
 ```
 
-2) Создайте `.env` в корне и укажите ключ
-```
+2) Для запуска из IDE/консоли создайте `.env` в корне проекта
+```bash
 cp .env.example .env
 ```
 
 3) Запуск
-```
+```bash
 python -m app.main
 ```
 
-## Настройки
+## Где хранятся файлы
+
+Для собранного приложения (`.app` / `.exe`) рабочая папка:
+- `~/.stt-desktop/`
+
+В этой папке лежат:
+- `~/.stt-desktop/.env` — конфиг приложения
+- `~/.stt-desktop/prompt.md` — текущий промпт (можно открыть и отредактировать вручную)
+- `~/.stt-desktop/whisper-cache/` — кэш моделей Whisper
+- `~/.stt-desktop/app-errors.log` — лог ошибок приложения
+
+Важно:
+- В режиме IDE/консоли `.env` и `prompt.md` берутся из корня проекта.
+- В собранной версии `.env` и `prompt.md` используются из `~/.stt-desktop/`.
+
+## Переменные `.env`
+
 - `GIGACHAT_API_KEY` — ключ API
 - `HOTKEY` — горячая клавиша в формате `pynput` (пример: `<ctrl>+<cmd>+s`)
-- `PROMPT_PATH` — путь к `prompt.md`
+- `PROMPT_PATH` — путь к `prompt.md` (обычно `prompt.md`)
+- `WHISPER_MODEL` — модель Whisper (например, `base`)
+- `WHISPER_SSL_NO_VERIFY` — отключение SSL-проверки при загрузке модели (если нужно в корпоративной сети)
+- `GIGACHAT_SSL_NO_VERIFY` — отключение SSL-проверки для GigaChat (если нужно)
 
-## Примечания
-- Whisper использует локальную модель и может загружаться несколько секунд.
-- В Linux иногда требуются дополнительные права на глобальные хоткеи.
-- Для записи звука нужен доступ к микрофону.
-- Пути настроек в собранном приложении:
-- macOS `.app`: `.env` и `prompt.md` сохраняются внутри `YourApp.app/Contents/Resources/`.
-- Windows `.exe`: `.env` и `prompt.md` сохраняются рядом с `.exe`.
+## Разрешения
+
+macOS для собранного `.app`:
+- `System Settings -> Privacy & Security -> Microphone`
+- `System Settings -> Privacy & Security -> Accessibility`
+- `System Settings -> Privacy & Security -> Input Monitoring`
+
+Без этих разрешений запись и вставка могут не работать.
+
+## Сборка
+
+```bash
+python build.py
+```
+
+На macOS сборка идет через `.spec` (с plist и правами на микрофон).
