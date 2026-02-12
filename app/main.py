@@ -7,7 +7,7 @@ import platform
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -25,7 +25,6 @@ from pynput import keyboard
 APP_NAME = "STT Desktop"
 
 DEFAULT_HOTKEY = "<ctrl>+<cmd>+s"
-DEFAULT_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompt.md"
 TRAY_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "tray.png"
 
 
@@ -34,6 +33,24 @@ class AppConfig:
     gigachat_key: str
     hotkey: str
     prompt_path: Path
+    env_path: Path
+
+
+def get_runtime_storage_paths() -> tuple[Path, Path]:
+    if getattr(sys, "frozen", False):
+        executable_path = Path(sys.executable).resolve()
+        if platform.system() == "Darwin":
+            # Inside a macOS .app bundle:
+            # <App>.app/Contents/MacOS/<binary> -> use Contents/Resources
+            base_dir = executable_path.parent.parent / "Resources"
+        else:
+            # Windows/Linux frozen app: keep files next to executable
+            base_dir = executable_path.parent
+    else:
+        # Dev mode: keep files in project root
+        base_dir = Path(__file__).resolve().parent.parent
+
+    return base_dir / ".env", base_dir / "prompt.md"
 
 
 class Recorder:
@@ -134,15 +151,21 @@ class ProcessingWorker(QtCore.QObject):
 
 class MainWindow(QtWidgets.QWidget):
     start_stop = QtCore.Signal()
+    apply_settings = QtCore.Signal(str, str, str)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(520, 320)
+        self.setMinimumSize(680, 500)
         self._build_ui()
         self._apply_styles()
 
     def _build_ui(self):
+        self.tabs = QtWidgets.QTabWidget()
+
+        self.recording_page = QtWidgets.QWidget()
+        recording_layout = QtWidgets.QVBoxLayout(self.recording_page)
+
         self.status_label = QtWidgets.QLabel("Готов к записи")
         self.status_label.setAlignment(QtCore.Qt.AlignCenter)
 
@@ -153,21 +176,61 @@ class MainWindow(QtWidgets.QWidget):
         self.hint_label = QtWidgets.QLabel("Горячая клавиша: Ctrl+Cmd+S")
         self.hint_label.setAlignment(QtCore.Qt.AlignCenter)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addStretch(1)
-        layout.addWidget(self.status_label)
-        layout.addSpacing(20)
-        layout.addWidget(self.action_button)
-        layout.addSpacing(12)
-        layout.addWidget(self.hint_label)
-        layout.addStretch(2)
+        recording_layout.addStretch(1)
+        recording_layout.addWidget(self.status_label)
+        recording_layout.addSpacing(20)
+        recording_layout.addWidget(self.action_button)
+        recording_layout.addSpacing(12)
+        recording_layout.addWidget(self.hint_label)
+        recording_layout.addStretch(2)
+
+        self.settings_page = QtWidgets.QWidget()
+        settings_layout = QtWidgets.QVBoxLayout(self.settings_page)
+
+        self.hotkey_input = QtWidgets.QLineEdit()
+        self.hotkey_input.setPlaceholderText("<ctrl>+<cmd>+s")
+
+        self.api_key_input = QtWidgets.QLineEdit()
+        self.api_key_input.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.api_key_input.setPlaceholderText("GigaChat API key")
+
+        self.prompt_input = QtWidgets.QPlainTextEdit()
+        self.prompt_input.setPlaceholderText("Системный промпт для обработки текста...")
+        self.prompt_input.setMinimumHeight(220)
+
+        self.settings_status_label = QtWidgets.QLabel("")
+        self.settings_status_label.setAlignment(QtCore.Qt.AlignLeft)
+
+        self.apply_button = QtWidgets.QPushButton("Применить")
+        self.apply_button.setFixedHeight(46)
+        self.apply_button.clicked.connect(self._emit_apply_settings)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Горячая клавиша", self.hotkey_input)
+        form.addRow("API ключ GigaChat", self.api_key_input)
+        form.addRow("Промпт", self.prompt_input)
+
+        settings_layout.addLayout(form)
+        settings_layout.addWidget(self.apply_button)
+        settings_layout.addWidget(self.settings_status_label)
+        settings_layout.addStretch(1)
+
+        self.tabs.addTab(self.recording_page, "Запись")
+        self.tabs.addTab(self.settings_page, "Настройки")
+
+        root_layout = QtWidgets.QVBoxLayout(self)
+        root_layout.addWidget(self.tabs)
 
     def _apply_styles(self):
         self.setStyleSheet(
             """
             QWidget { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0f172a, stop:1 #1f2937); color: #e5e7eb; }
             QLabel { font-size: 16px; }
-            QPushButton { background: #22c55e; color: #0b111e; font-size: 20px; border: none; border-radius: 14px; padding: 12px; }
+            QTabWidget::pane { border: 1px solid #334155; border-radius: 12px; }
+            QTabBar::tab { background: #1e293b; color: #cbd5e1; padding: 10px 16px; margin-right: 6px; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+            QTabBar::tab:selected { background: #334155; color: #f8fafc; }
+            QLineEdit, QPlainTextEdit { background: #111827; border: 1px solid #374151; border-radius: 10px; padding: 10px; color: #f3f4f6; }
+            QPushButton { background: #22c55e; color: #0b111e; font-size: 18px; border: none; border-radius: 14px; padding: 12px; }
             QPushButton:hover { background: #16a34a; }
             QPushButton:pressed { background: #15803d; }
             """
@@ -190,6 +253,23 @@ class MainWindow(QtWidgets.QWidget):
         self.action_button.setEnabled(True)
         self.set_recording(False)
 
+    def set_settings(self, hotkey: str, api_key: str, prompt: str):
+        self.hotkey_input.setText(hotkey)
+        self.api_key_input.setText(api_key)
+        self.prompt_input.setPlainText(prompt)
+
+    def set_settings_status(self, text: str, ok: bool):
+        color = "#86efac" if ok else "#fca5a5"
+        self.settings_status_label.setStyleSheet(f"color: {color};")
+        self.settings_status_label.setText(text)
+
+    def _emit_apply_settings(self):
+        self.apply_settings.emit(
+            self.hotkey_input.text().strip(),
+            self.api_key_input.text().strip(),
+            self.prompt_input.toPlainText().strip(),
+        )
+
 
 class AppController(QtCore.QObject):
     def __init__(self, config: AppConfig, window: MainWindow):
@@ -204,6 +284,7 @@ class AppController(QtCore.QObject):
         self._hotkey_listener = None
 
         self.window.start_stop.connect(self.toggle_recording)
+        self.window.apply_settings.connect(self.save_settings)
 
     def start(self):
         self._start_hotkey()
@@ -219,6 +300,8 @@ class AppController(QtCore.QObject):
         hotkey = self.config.hotkey or DEFAULT_HOTKEY
         self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
         try:
+            if self._hotkey_listener is not None:
+                self._hotkey_listener.stop()
             self._hotkey_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_recording})
             self._hotkey_listener.start()
         except Exception as e:
@@ -244,6 +327,10 @@ class AppController(QtCore.QObject):
         audio = self.recorder.stop()
         self.is_recording = False
         if audio is None:
+            self.window.set_idle()
+            return
+        if not self.config.gigachat_key:
+            self.window.status_label.setText("Укажите API ключ GigaChat в настройках")
             self.window.set_idle()
             return
         if self.whisper_model is None:
@@ -321,15 +408,55 @@ class AppController(QtCore.QObject):
     def _humanize_hotkey(hotkey: str) -> str:
         return hotkey.replace("<cmd>", "Cmd").replace("<ctrl>", "Ctrl").replace("<alt>", "Alt").replace("<shift>", "Shift").replace("+", "+").replace("<", "").replace(">", "")
 
+    def save_settings(self, hotkey: str, api_key: str, prompt: str):
+        if not hotkey:
+            hotkey = DEFAULT_HOTKEY
+        if not prompt:
+            prompt = "Сделай текст красивым и грамотным."
+
+        try:
+            old_hotkey = self.config.hotkey
+            self.config.hotkey = hotkey
+            self.config.gigachat_key = api_key
+
+            env_path = self.config.env_path
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config.prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            if not env_path.exists():
+                env_path.write_text("", encoding="utf-8")
+
+            set_key(str(env_path), "HOTKEY", hotkey)
+            set_key(str(env_path), "GIGACHAT_API_KEY", api_key)
+            set_key(str(env_path), "PROMPT_PATH", "prompt.md")
+
+            self.config.prompt_path.write_text(prompt, encoding="utf-8")
+
+            self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
+            if hotkey != old_hotkey:
+                self.window.set_settings_status(
+                    "Настройки сохранены. Новая горячая клавиша применится после перезапуска приложения.",
+                    True,
+                )
+            else:
+                self.window.set_settings_status("Настройки сохранены", True)
+        except Exception as e:
+            self.window.set_settings_status(f"Ошибка сохранения: {e}", False)
+
 
 def load_config() -> AppConfig:
-    load_dotenv()
+    env_path, default_prompt_path = get_runtime_storage_paths()
+    load_dotenv(dotenv_path=env_path, override=True)
+
     key = os.getenv("GIGACHAT_API_KEY", "").strip()
     hotkey = os.getenv("HOTKEY", DEFAULT_HOTKEY).strip()
-    prompt_path = Path(os.getenv("PROMPT_PATH", str(DEFAULT_PROMPT_PATH)))
-    if not key:
-        raise RuntimeError("GIGACHAT_API_KEY is missing in .env")
-    return AppConfig(gigachat_key=key, hotkey=hotkey, prompt_path=prompt_path)
+    prompt_path_value = os.getenv("PROMPT_PATH", "prompt.md").strip()
+    prompt_path = Path(prompt_path_value)
+    if not prompt_path.is_absolute():
+        prompt_path = env_path.parent / prompt_path
+    if not prompt_path_value:
+        prompt_path = default_prompt_path
+
+    return AppConfig(gigachat_key=key, hotkey=hotkey, prompt_path=prompt_path, env_path=env_path)
 
 
 def main():
@@ -350,6 +477,10 @@ def main():
         return
 
     controller = AppController(config, window)
+    default_prompt = "Сделай текст красивым и грамотным."
+    if config.prompt_path.exists():
+        default_prompt = config.prompt_path.read_text(encoding="utf-8").strip() or default_prompt
+    window.set_settings(config.hotkey or DEFAULT_HOTKEY, config.gigachat_key, default_prompt)
     controller.start()
 
     tray = QtWidgets.QSystemTrayIcon(app_icon, window)
