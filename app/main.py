@@ -5,6 +5,7 @@ import tempfile
 import time
 import platform
 import logging
+import multiprocessing
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -689,4 +690,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
