@@ -25,7 +25,6 @@ from pynput import keyboard
 APP_NAME = "STT Desktop"
 
 DEFAULT_HOTKEY = "<ctrl>+<cmd>+s"
-TRAY_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "tray.png"
 
 
 @dataclass
@@ -51,6 +50,34 @@ def get_runtime_storage_paths() -> tuple[Path, Path]:
         base_dir = Path(__file__).resolve().parent.parent
 
     return base_dir / ".env", base_dir / "prompt.md"
+
+
+def get_resource_base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_app_icon_path() -> Path | None:
+    base_dir = get_resource_base_dir()
+    assets_dir = base_dir / "assets"
+    system = platform.system()
+
+    candidates = []
+    if system == "Darwin":
+        candidates = [assets_dir / "icon.icns", assets_dir / "tray.png"]
+    elif system == "Windows":
+        candidates = [assets_dir / "icon.ico", assets_dir / "tray.png"]
+    else:
+        candidates = [assets_dir / "tray.png", assets_dir / "icon.ico"]
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 
 class Recorder:
@@ -463,7 +490,8 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    app_icon = QtGui.QIcon(str(TRAY_ICON_PATH))
+    icon_path = resolve_app_icon_path()
+    app_icon = QtGui.QIcon(str(icon_path)) if icon_path else app.style().standardIcon(QtWidgets.QStyle.SP_ComputerIcon)
     app.setWindowIcon(app_icon)
     app.setApplicationDisplayName(APP_NAME)
 
