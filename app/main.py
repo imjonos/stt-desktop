@@ -287,35 +287,35 @@ class AppController(QtCore.QObject):
         self.thread.quit()
 
     def _paste_text(self, text: str):
-        # Сохраняем текущее содержимое буфера
         previous = pyperclip.paste()
 
         try:
-            # Копируем новый текст
-            print(f"[Вставка] {text}")
+            print(text)
             pyperclip.copy(text)
-            time.sleep(0.2)  # Даем системе время
+            time.sleep(0.2)
 
-            # Создаём контроллер
-            controller = keyboard.Controller()
-            system = platform.system().lower()
-
-            # Имитируем Cmd+V или Ctrl+V
-            modifier = keyboard.Key.cmd if system == "darwin" else keyboard.Key.ctrl
-
-            with controller.pressed(modifier):
-                time.sleep(0.1)
-                controller.press('v')
-                controller.release('v')
+            if platform.system() == "Darwin":
+                import subprocess
+                result = subprocess.run([
+                    'osascript', '-e',
+                    'tell application "System Events" to keystroke "v" using command down'
+                ], capture_output=True, timeout=5)
+                if result.returncode != 0:
+                    raise RuntimeError(result.stderr.decode('utf-8'))
+            else:
+                controller = keyboard.Controller()
+                modifier = keyboard.Key.ctrl
+                with controller.pressed(modifier):
+                    controller.press(keyboard.KeyCode.from_char('v'))
+                    controller.release(keyboard.KeyCode.from_char('v'))
             time.sleep(0.1)
-
         except Exception as e:
-            print(f"[Ошибка вставки] {e}")
-            self.window.status_label.setText("Ошибка вставки")
+            self.window.status_label.setText("✅ Текст скопирован! Нажмите Ctrl+V")
         finally:
-            print('[Вставка завершена]')
-            # Восстанавливаем предыдущее содержимое буфера
-            #pyperclip.copy(previous)
+            try:
+                pyperclip.copy(previous)
+            except Exception:
+                pass
 
     @staticmethod
     def _humanize_hotkey(hotkey: str) -> str:
@@ -336,7 +336,12 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    app_icon = QtGui.QIcon(str(TRAY_ICON_PATH))
+    app.setWindowIcon(app_icon)
+    app.setApplicationDisplayName(APP_NAME)
+
     window = MainWindow()
+    window.setWindowIcon(app_icon)
 
     try:
         config = load_config()
@@ -347,7 +352,7 @@ def main():
     controller = AppController(config, window)
     controller.start()
 
-    tray = QtWidgets.QSystemTrayIcon(QtGui.QIcon(str(TRAY_ICON_PATH)), window)
+    tray = QtWidgets.QSystemTrayIcon(app_icon, window)
     menu = QtWidgets.QMenu()
     show_action = menu.addAction("Открыть")
     show_action.triggered.connect(window.show)

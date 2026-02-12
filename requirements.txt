@@ -7,6 +7,4 @@ soundfile==0.12.1
 numpy==1.26.4
 openai-whisper
 torch==2.2.2
-# GigaChat official SDK
-# If you already use a specific version, pin it here.
 gigachat
