@@ -40,12 +40,16 @@ class AppController(QtCore.QObject):
 
     def _load_whisper_async(self):
         def _load():
+            self.window.set_start_model_loading()
+
             try:
                 cache_dir = get_whisper_cache_dir()
                 checkpoint = resolve_local_whisper_checkpoint("base", cache_dir)
                 self.whisper_model = whisper.load_model(checkpoint)
             except Exception as e:
                 self._report_error(f"Ошибка загрузки Whisper: {e}", with_trace=True)
+            finally:
+                self.window.set_idle()
 
         t = threading.Thread(target=_load, daemon=True)
         t.start()

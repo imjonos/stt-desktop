@@ -110,6 +110,11 @@ class MainWindow(QtWidgets.QWidget):
         self.action_button.setText("Подождите…")
         self.action_button.setEnabled(False)
 
+    def set_start_model_loading(self):
+        self.status_label.setText("Загрузка модели…")
+        self.action_button.setText("Подождите…")
+        self.action_button.setEnabled(False)
+
     def set_idle(self):
         self.action_button.setEnabled(True)
         self.set_recording(False)

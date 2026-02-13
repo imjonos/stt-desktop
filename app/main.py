@@ -37,7 +37,6 @@ def main():
     if config.prompt_path.exists():
         default_prompt = config.prompt_path.read_text(encoding="utf-8").strip() or default_prompt
     window.set_settings(config.hotkey or DEFAULT_HOTKEY, config.gigachat_key, default_prompt)
-    controller.start()
 
     tray = QtWidgets.QSystemTrayIcon(app_icon, window)
     menu = QtWidgets.QMenu()
@@ -50,8 +49,9 @@ def main():
     tray.setContextMenu(menu)
     tray.setToolTip(APP_NAME)
     tray.show()
-
     window.show()
+    controller.start()
+
     sys.exit(app.exec())
 
 
