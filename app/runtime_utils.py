@@ -2,13 +2,11 @@ import os
 import platform
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-import whisper
 
 from app.config_model import AppConfig
-from app.constants import DEFAULT_HOTKEY
+from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY
 
 
 def get_runtime_storage_paths() -> tuple[Path, Path]:
@@ -78,20 +76,15 @@ def get_whisper_cache_dir() -> Path:
     return cache_dir
 
 
-def resolve_local_whisper_checkpoint(model_name: str, cache_dir: Path) -> str:
+def load_whisper_model(model_name: str, cache_dir: Path):
+    import whisper
+
     model_candidate = Path(model_name)
     if model_candidate.is_file():
-        return str(model_candidate)
+        return whisper.load_model(str(model_candidate))
 
     if model_name in whisper._MODELS:
-        model_url = whisper._MODELS[model_name]
-        filename = Path(urlparse(model_url).path).name
-        checkpoint = cache_dir / filename
-        if checkpoint.is_file():
-            return str(checkpoint)
-        raise RuntimeError(
-            f"Whisper model '{model_name}' not found in cache: {checkpoint}"
-        )
+        return whisper.load_model(model_name, download_root=str(cache_dir))
 
     raise RuntimeError(
         f"Unknown Whisper model '{model_name}'. Use known name or local checkpoint path."
@@ -103,7 +96,9 @@ def load_config() -> AppConfig:
     load_dotenv(dotenv_path=env_path, override=True)
 
     key = os.getenv("GIGACHAT_API_KEY", "").strip()
+    gigachat_model = os.getenv("GIGACHAT_MODEL", DEFAULT_GIGACHAT_MODEL).strip() or DEFAULT_GIGACHAT_MODEL
     hotkey = os.getenv("HOTKEY", DEFAULT_HOTKEY).strip()
+    whisper_model = os.getenv("WHISPER_MODEL", "base").strip() or "base"
     prompt_path_value = os.getenv("PROMPT_PATH", "prompt.md").strip()
     prompt_path = Path(prompt_path_value)
     if not prompt_path.is_absolute():
@@ -111,4 +106,11 @@ def load_config() -> AppConfig:
     if not prompt_path_value:
         prompt_path = default_prompt_path
 
-    return AppConfig(gigachat_key=key, hotkey=hotkey, prompt_path=prompt_path, env_path=env_path)
+    return AppConfig(
+        gigachat_key=key,
+        gigachat_model=gigachat_model,
+        hotkey=hotkey,
+        whisper_model=whisper_model,
+        prompt_path=prompt_path,
+        env_path=env_path,
+    )

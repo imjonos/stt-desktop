@@ -3,27 +3,26 @@ import threading
 import time
 
 import pyperclip
-import whisper
 from PySide6 import QtCore
 from dotenv import set_key
-from pynput import keyboard
 
 from app.config_model import AppConfig
-from app.constants import DEFAULT_HOTKEY
+from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY
 from app.logging_utils import LOGGER
-from app.processing_worker import ProcessingWorker
-from app.recorder import Recorder
-from app.runtime_utils import get_whisper_cache_dir, resolve_local_whisper_checkpoint
+from app.runtime_utils import get_whisper_cache_dir, load_whisper_model
 
 
 class AppController(QtCore.QObject):
     ui_error = QtCore.Signal(str)
+    model_loading = QtCore.Signal(str)
+    model_ready = QtCore.Signal()
+    toggle_requested = QtCore.Signal()
 
     def __init__(self, config: AppConfig, window):
         super().__init__()
         self.config = config
         self.window = window
-        self.recorder = Recorder()
+        self.recorder = None
         self.is_recording = False
         self.is_processing = False
         self.is_audio_processing = False
@@ -33,6 +32,9 @@ class AppController(QtCore.QObject):
         self.window.start_stop.connect(self.toggle_recording)
         self.window.apply_settings.connect(self.save_settings)
         self.ui_error.connect(self._apply_error_to_ui)
+        self.model_loading.connect(self.window.set_start_model_loading)
+        self.model_ready.connect(self.window.set_idle)
+        self.toggle_requested.connect(self.toggle_recording)
 
     def start(self):
         self._start_hotkey()
@@ -40,30 +42,52 @@ class AppController(QtCore.QObject):
 
     def _load_whisper_async(self):
         def _load():
-            self.window.set_start_model_loading()
+            model_name = self.config.whisper_model or "base"
+            self.model_loading.emit(model_name)
 
             try:
                 cache_dir = get_whisper_cache_dir()
-                checkpoint = resolve_local_whisper_checkpoint("base", cache_dir)
-                self.whisper_model = whisper.load_model(checkpoint)
+                self.whisper_model = load_whisper_model(model_name, cache_dir)
+                self.model_ready.emit()
             except Exception as e:
                 self._report_error(f"Ошибка загрузки Whisper: {e}", with_trace=True)
-            finally:
-                self.window.set_idle()
 
         t = threading.Thread(target=_load, daemon=True)
         t.start()
 
-    def _start_hotkey(self):
-        hotkey = self.config.hotkey or DEFAULT_HOTKEY
-        self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
+    def _stop_hotkey(self, listener=None):
+        listener = listener or self._hotkey_listener
+        if listener is None:
+            return
+
+        if listener is self._hotkey_listener:
+            self._hotkey_listener = None
+
         try:
-            if self._hotkey_listener is not None:
-                self._hotkey_listener.stop()
-            self._hotkey_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_recording})
-            self._hotkey_listener.start()
+            listener.stop()
+            listener.join(timeout=1)
+        except RuntimeError:
+            pass
+        except Exception as e:
+            LOGGER.exception("Hotkey listener stop failed: %s", e)
+
+    def _start_hotkey(self, hotkey: str | None = None) -> bool:
+        from pynput import keyboard
+
+        hotkey = hotkey or self.config.hotkey or DEFAULT_HOTKEY
+        try:
+            new_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_requested.emit})
+            new_listener.start()
         except Exception as e:
             self._report_error(f"Ошибка hotkey: {e}", with_trace=True)
+            return False
+
+        old_listener = self._hotkey_listener
+        self._hotkey_listener = new_listener
+        self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
+        if old_listener is not None:
+            self._stop_hotkey(old_listener)
+        return True
 
     def toggle_recording(self):
         if self.is_processing:
@@ -75,6 +99,10 @@ class AppController(QtCore.QObject):
 
     def _start_recording(self):
         try:
+            if self.recorder is None:
+                from app.recorder import Recorder
+
+                self.recorder = Recorder()
             self.recorder.start()
             self.is_recording = True
             self.window.set_recording(True)
@@ -104,6 +132,8 @@ class AppController(QtCore.QObject):
         if self.is_audio_processing:
             print("Already processing")
             return
+        from app.processing_worker import ProcessingWorker
+
         self.is_audio_processing = True
         self.thread = QtCore.QThread()
         self.worker = ProcessingWorker(audio, self.config, self.whisper_model)
@@ -155,6 +185,8 @@ class AppController(QtCore.QObject):
                 if result.returncode != 0:
                     raise RuntimeError(result.stderr.decode("utf-8"))
             else:
+                from pynput import keyboard
+
                 controller = keyboard.Controller()
                 modifier = keyboard.Key.ctrl
                 with controller.pressed(modifier):
@@ -181,16 +213,23 @@ class AppController(QtCore.QObject):
             .replace(">", "")
         )
 
-    def save_settings(self, hotkey: str, api_key: str, prompt: str):
+    def save_settings(self, hotkey: str, api_key: str, gigachat_model: str, whisper_model: str, prompt: str):
         if not hotkey:
             hotkey = DEFAULT_HOTKEY
+        if not gigachat_model:
+            gigachat_model = DEFAULT_GIGACHAT_MODEL
+        if not whisper_model:
+            whisper_model = "base"
         if not prompt:
             prompt = "Сделай текст красивым и грамотным."
 
         try:
             old_hotkey = self.config.hotkey
+            old_whisper_model = self.config.whisper_model
             self.config.hotkey = hotkey
             self.config.gigachat_key = api_key
+            self.config.gigachat_model = gigachat_model
+            self.config.whisper_model = whisper_model
 
             env_path = self.config.env_path
             env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,14 +239,24 @@ class AppController(QtCore.QObject):
 
             set_key(str(env_path), "HOTKEY", hotkey)
             set_key(str(env_path), "GIGACHAT_API_KEY", api_key)
+            set_key(str(env_path), "GIGACHAT_MODEL", gigachat_model)
+            set_key(str(env_path), "WHISPER_MODEL", whisper_model)
             set_key(str(env_path), "PROMPT_PATH", "prompt.md")
 
             self.config.prompt_path.write_text(prompt, encoding="utf-8")
 
-            self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
+            restart_changes = []
             if hotkey != old_hotkey:
+                if not self._start_hotkey(hotkey):
+                    self.config.hotkey = old_hotkey
+                    set_key(str(env_path), "HOTKEY", old_hotkey)
+                    self.window.set_settings_status("Не удалось применить новую горячую клавишу", False)
+                    return
+            if whisper_model != old_whisper_model:
+                restart_changes.append("модель")
+            if restart_changes:
                 self.window.set_settings_status(
-                    "Настройки сохранены. Новая горячая клавиша применится после перезапуска приложения.",
+                    f"Настройки сохранены. После перезапуска применится: {', '.join(restart_changes)}.",
                     True,
                 )
             else:
@@ -224,5 +273,7 @@ class AppController(QtCore.QObject):
             LOGGER.error(message)
 
     def _apply_error_to_ui(self, message: str):
-        self.window.status_label.setText(message)
+        self.window.status_label.setText("Ошибка")
+        self.window.status_detail_label.setText(message)
+        self.window.status_dot.setStyleSheet("background: #fb7185; border-radius: 7px;")
         self.window.set_error_text(message)

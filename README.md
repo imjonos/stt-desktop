@@ -41,9 +41,10 @@ python -m app.main
 ## Переменные `.env`
 
 - `GIGACHAT_API_KEY` — ключ API
+- `GIGACHAT_MODEL` — модель GigaChat для постобработки текста (по умолчанию `GigaChat`)
 - `HOTKEY` — горячая клавиша в формате `pynput` (пример: `<ctrl>+<cmd>+s`)
 - `PROMPT_PATH` — путь к `prompt.md` (обычно `prompt.md`)
-- `WHISPER_MODEL` — модель Whisper (например, `base`)
+- `WHISPER_MODEL` — модель Whisper (`tiny` быстрее стартует, `base` точнее и используется по умолчанию)
 - `WHISPER_SSL_NO_VERIFY` — отключение SSL-проверки при загрузке модели (если нужно в корпоративной сети)
 - `GIGACHAT_SSL_NO_VERIFY` — отключение SSL-проверки для GigaChat (если нужно)
 

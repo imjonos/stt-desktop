@@ -79,6 +79,7 @@ class ProcessingWorker(QtCore.QObject):
     def _process_text(self, prompt: str, text: str) -> str:
         with GigaChat(credentials=self.config.gigachat_key, verify_ssl_certs=False) as giga:
             chat = Chat(
+                model=self.config.gigachat_model,
                 messages=[
                     Messages(role="system", content=prompt),
                     Messages(role="user", content=text),

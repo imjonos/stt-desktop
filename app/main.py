@@ -36,7 +36,13 @@ def main():
     default_prompt = "Сделай текст красивым и грамотным."
     if config.prompt_path.exists():
         default_prompt = config.prompt_path.read_text(encoding="utf-8").strip() or default_prompt
-    window.set_settings(config.hotkey or DEFAULT_HOTKEY, config.gigachat_key, default_prompt)
+    window.set_settings(
+        config.hotkey or DEFAULT_HOTKEY,
+        config.gigachat_key,
+        config.gigachat_model,
+        config.whisper_model,
+        default_prompt,
+    )
 
     tray = QtWidgets.QSystemTrayIcon(app_icon, window)
     menu = QtWidgets.QMenu()
