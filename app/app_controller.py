@@ -1,3 +1,4 @@
+import json
 import platform
 import threading
 import time
@@ -6,7 +7,7 @@ import pyperclip
 from PySide6 import QtCore
 from dotenv import set_key
 
-from app.config_model import AppConfig
+from app.config_model import AppConfig, PromptMode
 from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY
 from app.logging_utils import LOGGER
 from app.runtime_utils import get_whisper_cache_dir, load_whisper_model
@@ -28,6 +29,7 @@ class AppController(QtCore.QObject):
         self.is_audio_processing = False
         self.whisper_model = None
         self._hotkey_listener = None
+        self._target_app_bundle_id = None
 
         self.window.start_stop.connect(self.toggle_recording)
         self.window.apply_settings.connect(self.save_settings)
@@ -99,6 +101,7 @@ class AppController(QtCore.QObject):
 
     def _start_recording(self):
         try:
+            self._target_app_bundle_id = self._get_frontmost_app_bundle_id()
             if self.recorder is None:
                 from app.recorder import Recorder
 
@@ -147,12 +150,14 @@ class AppController(QtCore.QObject):
         self.thread.start()
 
     def _on_processed(self, text: str):
-        self._paste_text(text)
-        self.is_processing = False
-        self.is_audio_processing = False
-        self.window.set_idle()
-        self.window.clear_error_text()
-        self.thread.quit()
+        try:
+            if self._paste_text(text):
+                self.window.clear_error_text()
+        finally:
+            self.is_processing = False
+            self.is_audio_processing = False
+            self.window.set_idle()
+            self.thread.quit()
 
     def _on_error(self, msg: str):
         self.is_processing = False
@@ -163,43 +168,74 @@ class AppController(QtCore.QObject):
         self.thread.quit()
 
     def _paste_text(self, text: str):
-        previous = pyperclip.paste()
-
         try:
-            print(text)
+            LOGGER.info("Pasting processed text, length=%s", len(text))
             pyperclip.copy(text)
-            time.sleep(0.2)
+            time.sleep(0.35)
 
             if platform.system() == "Darwin":
-                import subprocess
-
-                result = subprocess.run(
-                    [
-                        "osascript",
-                        "-e",
-                        'tell application "System Events" to keystroke "v" using command down',
-                    ],
-                    capture_output=True,
-                    timeout=5,
-                )
-                if result.returncode != 0:
-                    raise RuntimeError(result.stderr.decode("utf-8"))
+                self._activate_target_app()
+                time.sleep(0.2)
+                self._paste_with_keyboard_controller(use_cmd=True)
             else:
-                from pynput import keyboard
+                self._paste_with_keyboard_controller(use_cmd=False)
+            time.sleep(0.25)
+            return True
+        except Exception as e:
+            LOGGER.exception("Auto paste failed")
+            self._report_error(f"Текст распознан и оставлен в буфере обмена. Вставьте вручную Cmd/Ctrl+V. Детали: {e}")
+            return False
 
-                controller = keyboard.Controller()
-                modifier = keyboard.Key.ctrl
-                with controller.pressed(modifier):
-                    controller.press(keyboard.KeyCode.from_char("v"))
-                    controller.release(keyboard.KeyCode.from_char("v"))
-            time.sleep(0.1)
+    @staticmethod
+    def _get_frontmost_app_bundle_id() -> str | None:
+        if platform.system() != "Darwin":
+            return None
+
+        import subprocess
+
+        script = (
+            'tell application "System Events" to get bundle identifier of '
+            "first application process whose frontmost is true"
+        )
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=True,
+            )
         except Exception:
-            self._report_error("Текст скопирован, вставьте вручную Cmd/Ctrl+V")
-        finally:
-            try:
-                pyperclip.copy(previous)
-            except Exception:
-                pass
+            return None
+
+        bundle_id = result.stdout.strip()
+        if bundle_id in {"com.sttdesktop.app", "org.python.python", "com.apple.Terminal"}:
+            return None
+        return bundle_id or None
+
+    def _activate_target_app(self):
+        if not self._target_app_bundle_id:
+            return
+
+        import subprocess
+
+        subprocess.run(
+            ["osascript", "-e", f'tell application id "{self._target_app_bundle_id}" to activate'],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
+        )
+
+    @staticmethod
+    def _paste_with_keyboard_controller(use_cmd: bool):
+        from pynput import keyboard
+
+        controller = keyboard.Controller()
+        modifier = keyboard.Key.cmd if use_cmd else keyboard.Key.ctrl
+        with controller.pressed(modifier):
+            controller.press(keyboard.KeyCode.from_char("v"))
+            controller.release(keyboard.KeyCode.from_char("v"))
 
     @staticmethod
     def _humanize_hotkey(hotkey: str) -> str:
@@ -213,27 +249,39 @@ class AppController(QtCore.QObject):
             .replace(">", "")
         )
 
-    def save_settings(self, hotkey: str, api_key: str, gigachat_model: str, whisper_model: str, prompt: str):
+    def save_settings(
+        self,
+        hotkey: str,
+        api_key: str,
+        gigachat_model: str,
+        whisper_model: str,
+        prompt_modes_data,
+        active_prompt_mode_id: str,
+    ):
         if not hotkey:
             hotkey = DEFAULT_HOTKEY
         if not gigachat_model:
             gigachat_model = DEFAULT_GIGACHAT_MODEL
         if not whisper_model:
             whisper_model = "base"
-        if not prompt:
-            prompt = "Сделай текст красивым и грамотным."
 
         try:
             old_hotkey = self.config.hotkey
             old_whisper_model = self.config.whisper_model
+            prompt_modes = self._normalize_prompt_modes(prompt_modes_data)
+            if not any(mode.id == active_prompt_mode_id for mode in prompt_modes):
+                active_prompt_mode_id = prompt_modes[0].id
             self.config.hotkey = hotkey
             self.config.gigachat_key = api_key
             self.config.gigachat_model = gigachat_model
             self.config.whisper_model = whisper_model
+            self.config.prompt_modes = prompt_modes
+            self.config.active_prompt_mode_id = active_prompt_mode_id
 
             env_path = self.config.env_path
             env_path.parent.mkdir(parents=True, exist_ok=True)
             self.config.prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config.prompt_modes_path.parent.mkdir(parents=True, exist_ok=True)
             if not env_path.exists():
                 env_path.write_text("", encoding="utf-8")
 
@@ -242,8 +290,24 @@ class AppController(QtCore.QObject):
             set_key(str(env_path), "GIGACHAT_MODEL", gigachat_model)
             set_key(str(env_path), "WHISPER_MODEL", whisper_model)
             set_key(str(env_path), "PROMPT_PATH", "prompt.md")
+            set_key(str(env_path), "PROMPT_MODES_PATH", "prompt_modes.json")
+            set_key(str(env_path), "ACTIVE_PROMPT_MODE", active_prompt_mode_id)
 
-            self.config.prompt_path.write_text(prompt, encoding="utf-8")
+            self.config.prompt_modes_path.write_text(
+                json.dumps(
+                    [
+                        {"id": mode.id, "title": mode.title, "prompt": mode.prompt}
+                        for mode in prompt_modes
+                    ],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            active_mode = self._get_active_prompt_mode()
+            if active_mode:
+                self.config.prompt_path.write_text(active_mode.prompt, encoding="utf-8")
+                self.window.set_active_mode(active_mode.title)
 
             restart_changes = []
             if hotkey != old_hotkey:
@@ -264,6 +328,43 @@ class AppController(QtCore.QObject):
         except Exception as e:
             self.window.set_settings_status(f"Ошибка сохранения: {e}", False)
             self._report_error(f"Ошибка сохранения: {e}", with_trace=True)
+
+    @staticmethod
+    def _normalize_prompt_modes(prompt_modes_data) -> list[PromptMode]:
+        modes = []
+        seen = set()
+        for item in prompt_modes_data or []:
+            mode_id = str(item.get("id", "")).strip()
+            title = str(item.get("title", "")).strip()
+            prompt = str(item.get("prompt", "")).strip()
+            if not title or not prompt:
+                continue
+            if not mode_id:
+                mode_id = AppController._slugify_mode_id(title)
+            original_mode_id = mode_id
+            counter = 2
+            while mode_id in seen:
+                mode_id = f"{original_mode_id}_{counter}"
+                counter += 1
+            seen.add(mode_id)
+            modes.append(PromptMode(id=mode_id, title=title, prompt=prompt))
+
+        if modes:
+            return modes
+        return [PromptMode(id="polish", title="Красивый текст", prompt="Сделай текст красивым и грамотным.")]
+
+    @staticmethod
+    def _slugify_mode_id(title: str) -> str:
+        slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in title).strip("_")
+        while "__" in slug:
+            slug = slug.replace("__", "_")
+        return slug or "mode"
+
+    def _get_active_prompt_mode(self) -> PromptMode | None:
+        for mode in self.config.prompt_modes:
+            if mode.id == self.config.active_prompt_mode_id:
+                return mode
+        return self.config.prompt_modes[0] if self.config.prompt_modes else None
 
     def _report_error(self, message: str, with_trace: bool = False):
         self.ui_error.emit(message)

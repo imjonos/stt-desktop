@@ -31,6 +31,7 @@ python -m app.main
 В этой папке лежат:
 - `~/.stt-desktop/.env` — конфиг приложения
 - `~/.stt-desktop/prompt.md` — текущий промпт (можно открыть и отредактировать вручную)
+- `~/.stt-desktop/prompt_modes.json` — режимы обработки с названиями и промптами
 - `~/.stt-desktop/whisper-cache/` — кэш моделей Whisper
 - `~/.stt-desktop/app-errors.log` — лог ошибок приложения
 
@@ -44,6 +45,8 @@ python -m app.main
 - `GIGACHAT_MODEL` — модель GigaChat для постобработки текста (по умолчанию `GigaChat`)
 - `HOTKEY` — горячая клавиша в формате `pynput` (пример: `<ctrl>+<cmd>+s`)
 - `PROMPT_PATH` — путь к `prompt.md` (обычно `prompt.md`)
+- `PROMPT_MODES_PATH` — путь к JSON-файлу режимов обработки (обычно `prompt_modes.json`)
+- `ACTIVE_PROMPT_MODE` — id активного режима обработки
 - `WHISPER_MODEL` — модель Whisper (`tiny` быстрее стартует, `base` точнее и используется по умолчанию)
 - `WHISPER_SSL_NO_VERIFY` — отключение SSL-проверки при загрузке модели (если нужно в корпоративной сети)
 - `GIGACHAT_SSL_NO_VERIFY` — отключение SSL-проверки для GigaChat (если нужно)

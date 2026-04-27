@@ -1,8 +1,4 @@
-import os
-import tempfile
-
 import numpy as np
-import soundfile as sf
 from PySide6 import QtCore
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages
@@ -49,20 +45,13 @@ class ProcessingWorker(QtCore.QObject):
             gain = min(20.0, 0.03 / (rms + 1e-8))
             waveform = np.clip(waveform * gain, -1.0, 1.0)
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            path = f.name
-        sf.write(path, waveform, 16000)
         result = self.whisper_model.transcribe(
-            path,
+            waveform,
             language="ru",
             task="transcribe",
             temperature=0.0,
             fp16=False,
         )
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
         text = (result.get("text") or "").strip()
         if text:
             return text
@@ -72,6 +61,11 @@ class ProcessingWorker(QtCore.QObject):
         return seg_text
 
     def _load_prompt(self) -> str:
+        for mode in self.config.prompt_modes:
+            if mode.id == self.config.active_prompt_mode_id:
+                return mode.prompt
+        if self.config.prompt_modes:
+            return self.config.prompt_modes[0].prompt
         if self.config.prompt_path.exists():
             return self.config.prompt_path.read_text(encoding="utf-8").strip()
         return "Сделай текст красивым и грамотным."

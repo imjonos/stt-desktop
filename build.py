@@ -4,6 +4,20 @@ import shutil
 import subprocess
 
 
+def is_usable_binary(binary_path):
+    try:
+        subprocess.run(
+            [binary_path, '-version'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def build():
     system = platform.system()
     sep = ';' if system == 'Windows' else ':'
@@ -32,11 +46,11 @@ def build():
     ]
 
     ffmpeg_path = shutil.which('ffmpeg')
-    if ffmpeg_path:
+    if ffmpeg_path and is_usable_binary(ffmpeg_path):
         cmd.extend(['--add-binary', f'{ffmpeg_path}{sep}.'])
         print(f'Bundling ffmpeg: {ffmpeg_path}')
     else:
-        print('ffmpeg not found in PATH; building without bundled ffmpeg.')
+        print('ffmpeg not found or not usable; building without bundled ffmpeg.')
 
     cmd = [arg for arg in cmd if arg.strip()]
     subprocess.run(cmd, check=True)

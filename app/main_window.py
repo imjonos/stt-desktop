@@ -1,3 +1,5 @@
+import uuid
+
 from PySide6 import QtCore, QtWidgets
 
 from app.constants import APP_NAME
@@ -5,13 +7,15 @@ from app.constants import APP_NAME
 
 class MainWindow(QtWidgets.QWidget):
     start_stop = QtCore.Signal()
-    apply_settings = QtCore.Signal(str, str, str, str, str)
+    apply_settings = QtCore.Signal(str, str, str, str, object, str)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(680, 460)
         self.resize(760, 500)
+        self._prompt_modes = []
+        self._current_prompt_mode_id = None
         self._build_ui()
         self._apply_styles()
 
@@ -55,6 +59,10 @@ class MainWindow(QtWidgets.QWidget):
         self.status_detail_label.setWordWrap(True)
         self.status_detail_label.setObjectName("StatusDetailLabel")
 
+        self.active_mode_label = QtWidgets.QLabel("Режим: -")
+        self.active_mode_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.active_mode_label.setObjectName("ActiveModeLabel")
+
         status_header = QtWidgets.QHBoxLayout()
         status_header.addStretch(1)
         status_header.addWidget(self.status_dot)
@@ -62,6 +70,7 @@ class MainWindow(QtWidgets.QWidget):
         status_header.addStretch(1)
         status_layout.addLayout(status_header)
         status_layout.addWidget(self.status_detail_label)
+        status_layout.addWidget(self.active_mode_label)
 
         self.action_button = QtWidgets.QPushButton("Начать запись")
         self.action_button.setFixedHeight(60)
@@ -116,9 +125,33 @@ class MainWindow(QtWidgets.QWidget):
         self.whisper_model_input.setCurrentText("base")
         self.whisper_model_input.setMinimumWidth(180)
 
+        self.prompt_mode_combo = QtWidgets.QComboBox()
+        self.prompt_mode_combo.setMinimumWidth(240)
+        self.prompt_mode_combo.currentIndexChanged.connect(self._on_prompt_mode_changed)
+
+        self.add_prompt_mode_button = QtWidgets.QPushButton("Добавить")
+        self.add_prompt_mode_button.setObjectName("SecondaryButton")
+        self.add_prompt_mode_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.add_prompt_mode_button.clicked.connect(self._add_prompt_mode)
+
+        self.delete_prompt_mode_button = QtWidgets.QPushButton("Удалить")
+        self.delete_prompt_mode_button.setObjectName("SecondaryButton")
+        self.delete_prompt_mode_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.delete_prompt_mode_button.clicked.connect(self._delete_prompt_mode)
+
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.setSpacing(8)
+        mode_row.addWidget(self.prompt_mode_combo, 1)
+        mode_row.addWidget(self.add_prompt_mode_button)
+        mode_row.addWidget(self.delete_prompt_mode_button)
+
+        self.prompt_title_input = QtWidgets.QLineEdit()
+        self.prompt_title_input.setPlaceholderText("Название режима")
+        self.prompt_title_input.setMinimumWidth(280)
+
         self.prompt_input = QtWidgets.QPlainTextEdit()
-        self.prompt_input.setPlaceholderText("Системный промпт для обработки текста...")
-        self.prompt_input.setMinimumHeight(170)
+        self.prompt_input.setPlaceholderText("Системный промпт для выбранного режима...")
+        self.prompt_input.setMinimumHeight(150)
         self.prompt_input.setMinimumWidth(360)
 
         self.settings_status_label = QtWidgets.QLabel("")
@@ -140,7 +173,9 @@ class MainWindow(QtWidgets.QWidget):
         form.addRow("API ключ GigaChat", self.api_key_input)
         form.addRow("Модель GigaChat", self.gigachat_model_input)
         form.addRow("Модель Whisper", self.whisper_model_input)
-        form.addRow("Промпт", self.prompt_input)
+        form.addRow("Режим", mode_row)
+        form.addRow("Название режима", self.prompt_title_input)
+        form.addRow("Промпт режима", self.prompt_input)
 
         settings_content_layout.addLayout(form)
         settings_content_layout.addStretch(1)
@@ -234,9 +269,13 @@ class MainWindow(QtWidgets.QWidget):
                 font-size: 22px;
                 font-weight: 650;
             }
-            #StatusDetailLabel, #HintLabel {
+            #StatusDetailLabel, #HintLabel, #ActiveModeLabel {
                 color: #aab7b7;
                 font-size: 13px;
+            }
+            #ActiveModeLabel {
+                color: #d4eee2;
+                font-weight: 650;
             }
             QLineEdit, QPlainTextEdit, QComboBox {
                 background: #0f1519;
@@ -297,6 +336,21 @@ class MainWindow(QtWidgets.QWidget):
                 background: #2e3a3f;
                 color: #7f8d8d;
             }
+            #SecondaryButton {
+                background: #172128;
+                color: #d8e2df;
+                border: 1px solid #2d3940;
+                font-size: 13px;
+                font-weight: 650;
+                padding: 8px 12px;
+            }
+            #SecondaryButton:hover {
+                background: #20313a;
+                border-color: #3a5663;
+            }
+            #SecondaryButton:pressed {
+                background: #142027;
+            }
             """
         )
 
@@ -330,12 +384,26 @@ class MainWindow(QtWidgets.QWidget):
         self.action_button.setEnabled(True)
         self.set_recording(False)
 
-    def set_settings(self, hotkey: str, api_key: str, gigachat_model: str, whisper_model: str, prompt: str):
+    def set_settings(self, hotkey: str, api_key: str, gigachat_model: str, whisper_model: str, prompt_modes, active_prompt_mode_id: str):
         self.hotkey_input.setText(hotkey)
         self.api_key_input.setText(api_key)
         self.gigachat_model_input.setCurrentText(gigachat_model)
         self.whisper_model_input.setCurrentText(whisper_model)
-        self.prompt_input.setPlainText(prompt)
+        self._prompt_modes = [
+            {"id": mode.id, "title": mode.title, "prompt": mode.prompt}
+            for mode in prompt_modes
+        ]
+        if not self._prompt_modes:
+            self._prompt_modes = [
+                {"id": "polish", "title": "Красивый текст", "prompt": "Сделай текст красивым и грамотным."}
+            ]
+        self._current_prompt_mode_id = active_prompt_mode_id
+        self._refresh_prompt_mode_combo(active_prompt_mode_id)
+        self._load_prompt_mode_into_editor(active_prompt_mode_id)
+        self.set_active_mode(self._current_prompt_mode_title())
+
+    def set_active_mode(self, title: str):
+        self.active_mode_label.setText(f"Режим: {title}")
 
     def set_settings_status(self, text: str, ok: bool):
         color = "#86efac" if ok else "#fca5a5"
@@ -343,13 +411,90 @@ class MainWindow(QtWidgets.QWidget):
         self.settings_status_label.setText(text)
 
     def _emit_apply_settings(self):
+        self._sync_current_prompt_mode_from_inputs()
         self.apply_settings.emit(
             self.hotkey_input.text().strip(),
             self.api_key_input.text().strip(),
             self.gigachat_model_input.currentText().strip(),
             self.whisper_model_input.currentText().strip(),
-            self.prompt_input.toPlainText().strip(),
+            self._prompt_modes,
+            self._current_prompt_mode_id or "",
         )
+
+    def _refresh_prompt_mode_combo(self, active_mode_id: str | None = None):
+        self.prompt_mode_combo.blockSignals(True)
+        self.prompt_mode_combo.clear()
+        active_index = 0
+        for index, mode in enumerate(self._prompt_modes):
+            self.prompt_mode_combo.addItem(mode["title"], mode["id"])
+            if mode["id"] == active_mode_id:
+                active_index = index
+        self.prompt_mode_combo.setCurrentIndex(active_index)
+        self.prompt_mode_combo.blockSignals(False)
+        self._current_prompt_mode_id = self.prompt_mode_combo.currentData()
+
+    def _on_prompt_mode_changed(self, _index: int):
+        previous_id = self._current_prompt_mode_id
+        if previous_id:
+            self._sync_prompt_mode_from_inputs(previous_id)
+        next_id = self.prompt_mode_combo.currentData()
+        self._current_prompt_mode_id = next_id
+        self._load_prompt_mode_into_editor(next_id)
+
+    def _load_prompt_mode_into_editor(self, mode_id: str | None):
+        mode = self._find_prompt_mode(mode_id)
+        if not mode:
+            return
+        self.prompt_title_input.setText(mode["title"])
+        self.prompt_input.setPlainText(mode["prompt"])
+        self.delete_prompt_mode_button.setEnabled(len(self._prompt_modes) > 1)
+
+    def _sync_current_prompt_mode_from_inputs(self):
+        self._sync_prompt_mode_from_inputs(self._current_prompt_mode_id)
+
+    def _sync_prompt_mode_from_inputs(self, mode_id: str | None):
+        mode = self._find_prompt_mode(mode_id)
+        if not mode:
+            return
+        title = self.prompt_title_input.text().strip() or "Новый режим"
+        prompt = self.prompt_input.toPlainText().strip() or "Сделай текст красивым и грамотным."
+        mode["title"] = title
+        mode["prompt"] = prompt
+        index = self.prompt_mode_combo.findData(mode["id"])
+        if index >= 0:
+            self.prompt_mode_combo.setItemText(index, title)
+
+    def _add_prompt_mode(self):
+        self._sync_current_prompt_mode_from_inputs()
+        mode_id = f"mode_{uuid.uuid4().hex[:8]}"
+        self._prompt_modes.append(
+            {
+                "id": mode_id,
+                "title": "Новый режим",
+                "prompt": "Опиши, как нужно преобразовать распознанную речь.",
+            }
+        )
+        self._refresh_prompt_mode_combo(mode_id)
+        self._load_prompt_mode_into_editor(mode_id)
+
+    def _delete_prompt_mode(self):
+        if len(self._prompt_modes) <= 1:
+            return
+        current_id = self._current_prompt_mode_id
+        self._prompt_modes = [mode for mode in self._prompt_modes if mode["id"] != current_id]
+        next_id = self._prompt_modes[0]["id"]
+        self._refresh_prompt_mode_combo(next_id)
+        self._load_prompt_mode_into_editor(next_id)
+
+    def _find_prompt_mode(self, mode_id: str | None):
+        for mode in self._prompt_modes:
+            if mode["id"] == mode_id:
+                return mode
+        return None
+
+    def _current_prompt_mode_title(self) -> str:
+        mode = self._find_prompt_mode(self._current_prompt_mode_id)
+        return mode["title"] if mode else "-"
 
     def set_error_text(self, text: str):
         self.error_box.setPlainText(text)

@@ -73,7 +73,7 @@ sys.modules.setdefault("pynput", pynput)
 sys.modules.setdefault("pynput.keyboard", keyboard)
 
 from app.app_controller import AppController
-from app.config_model import AppConfig
+from app.config_model import AppConfig, PromptMode
 from app.logging_utils import LOGGER
 
 LOGGER.disabled = True
@@ -102,6 +102,7 @@ class FakeWindow:
         self.status_text = None
         self.status_ok = None
         self.error_text = ""
+        self.active_mode = ""
 
     def set_start_model_loading(self, *_args):
         pass
@@ -116,6 +117,9 @@ class FakeWindow:
     def set_error_text(self, text):
         self.error_text = text
 
+    def set_active_mode(self, title):
+        self.active_mode = title
+
 
 class HotkeyBindingTest(unittest.TestCase):
     def setUp(self):
@@ -128,7 +132,10 @@ class HotkeyBindingTest(unittest.TestCase):
             gigachat_model="GigaChat",
             hotkey="<ctrl>+<cmd>+s",
             whisper_model="base",
+            prompt_modes=[PromptMode(id="polish", title="Красивый текст", prompt="Prompt")],
+            active_prompt_mode_id="polish",
             prompt_path=base / "prompt.md",
+            prompt_modes_path=base / "prompt_modes.json",
             env_path=base / ".env",
         )
         self.window = FakeWindow()
@@ -141,7 +148,8 @@ class HotkeyBindingTest(unittest.TestCase):
         self.assertTrue(self.controller._start_hotkey())
         old_listener = FakeGlobalHotKeys.instances[-1]
 
-        self.controller.save_settings("<ctrl>+<alt>+x", "new-key", "GigaChat-Pro", "base", "Prompt")
+        modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
+        self.controller.save_settings("<ctrl>+<alt>+x", "new-key", "GigaChat-Pro", "base", modes, "polish")
         new_listener = FakeGlobalHotKeys.instances[-1]
 
         self.assertIs(self.controller._hotkey_listener, new_listener)
@@ -159,7 +167,8 @@ class HotkeyBindingTest(unittest.TestCase):
         old_listener = FakeGlobalHotKeys.instances[-1]
         FakeGlobalHotKeys.fail_for.add("bad-hotkey")
 
-        self.controller.save_settings("bad-hotkey", "new-key", "GigaChat-Pro", "base", "Prompt")
+        modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
+        self.controller.save_settings("bad-hotkey", "new-key", "GigaChat-Pro", "base", modes, "polish")
 
         self.assertIs(self.controller._hotkey_listener, old_listener)
         self.assertFalse(old_listener.stopped)
