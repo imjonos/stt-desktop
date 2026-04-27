@@ -1,6 +1,10 @@
 import os
 import platform
+import ssl
 import sys
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -76,6 +80,33 @@ def get_whisper_cache_dir() -> Path:
     return cache_dir
 
 
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_ssl_verify_error(error: Exception) -> bool:
+    reason = getattr(error, "reason", None)
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        return True
+    return "CERTIFICATE_VERIFY_FAILED" in str(error)
+
+
+@contextmanager
+def _without_ssl_verification():
+    original_urlopen = urllib.request.urlopen
+    context = ssl._create_unverified_context()
+
+    def urlopen_no_verify(url, *args, **kwargs):
+        kwargs.setdefault("context", context)
+        return original_urlopen(url, *args, **kwargs)
+
+    urllib.request.urlopen = urlopen_no_verify
+    try:
+        yield
+    finally:
+        urllib.request.urlopen = original_urlopen
+
+
 def load_whisper_model(model_name: str, cache_dir: Path):
     import whisper
 
@@ -84,7 +115,17 @@ def load_whisper_model(model_name: str, cache_dir: Path):
         return whisper.load_model(str(model_candidate))
 
     if model_name in whisper._MODELS:
-        return whisper.load_model(model_name, download_root=str(cache_dir))
+        if _env_flag("WHISPER_SSL_NO_VERIFY"):
+            with _without_ssl_verification():
+                return whisper.load_model(model_name, download_root=str(cache_dir))
+
+        try:
+            return whisper.load_model(model_name, download_root=str(cache_dir))
+        except urllib.error.URLError as e:
+            if not _is_ssl_verify_error(e):
+                raise
+            with _without_ssl_verification():
+                return whisper.load_model(model_name, download_root=str(cache_dir))
 
     raise RuntimeError(
         f"Unknown Whisper model '{model_name}'. Use known name or local checkpoint path."
