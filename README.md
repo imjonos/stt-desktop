@@ -1,80 +1,84 @@
 # STT Desktop
 
-Кроссплатформенное десктоп-приложение на Python:
-- Глобальная горячая клавиша для записи
-- Локальный Whisper для STT
-- Постобработка текста через GigaChat
-- Несколько режимов промптов для разных сценариев обработки
-- Вставка результата в активное поле (Cmd+V / Ctrl+V)
+STT Desktop is an alpha desktop app for dictation. Press a global hotkey, speak, and the app turns your voice into text, processes it with the selected prompt mode, and pastes the result into the active window.
 
-## Быстрый старт
+The core idea is simple: dictate a Telegram message, email, or note in text mode, or describe what you want to do in a terminal and get a ready-to-paste shell command in command mode.
 
-1) Установите зависимости
+Cross-platform Python desktop app:
+- Global hotkey for recording
+- Local Whisper speech-to-text
+- Text post-processing with GigaChat
+- Multiple prompt modes for different workflows
+- Automatic paste into the active input field (Cmd+V / Ctrl+V)
+
+## Quick Start
+
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2) Для запуска из IDE/консоли создайте `.env` в корне проекта
+2. For IDE/console runs, create `.env` in the project root:
 ```bash
 cp .env.example .env
 ```
 
-3) Запуск
+3. Run the app:
 ```bash
 python -m app.main
 ```
 
-## Режимы промптов
+## Prompt Modes
 
-Приложение поддерживает несколько режимов обработки текста. Каждый режим — это отдельный системный промпт для GigaChat, который определяет, как преобразовать распознанную речь перед вставкой.
+The app supports multiple text-processing modes. Each mode is a separate system prompt for GigaChat that defines how recognized speech should be transformed before it is pasted.
 
-По умолчанию доступны:
-- `Красивый текст` — улучшает диктовку, исправляет ошибки и приводит текст в аккуратный вид.
-- `Unix-команда` — преобразует голосовой запрос в консольную команду.
+Available by default:
+- `Polished text` — improves dictated text, fixes mistakes, and makes the result clean and readable. Useful for Telegram, email, notes, and any input field where you need natural text.
+- `Unix command` — turns a voice request into a shell command. Useful in a terminal: describe what you want to do, then paste the generated command into the command line.
 
-В настройках можно выбрать активный режим, отредактировать его название и промпт, удалить ненужный режим или добавить новые режимы под свои сценарии.
+In settings, you can choose the active mode, edit its name and prompt, delete modes you do not need, or add new modes for your own workflows.
 
-## Где хранятся файлы
+## File Storage
 
-Для собранного приложения (`.app` / `.exe`) рабочая папка:
+For the packaged app (`.app` / `.exe`), the working directory is:
 - `~/.stt-desktop/`
 
-В этой папке лежат:
-- `~/.stt-desktop/.env` — конфиг приложения
-- `~/.stt-desktop/prompt.md` — текущий промпт (можно открыть и отредактировать вручную)
-- `~/.stt-desktop/prompt_modes.json` — режимы обработки с названиями и промптами
-- `~/.stt-desktop/whisper-cache/` — кэш моделей Whisper
-- `~/.stt-desktop/app-errors.log` — лог ошибок приложения
+This directory contains:
+- `~/.stt-desktop/.env` — app configuration
+- `~/.stt-desktop/prompt.md` — current prompt, also editable manually
+- `~/.stt-desktop/prompt_modes.json` — processing modes with names and prompts
+- `~/.stt-desktop/whisper-cache/` — Whisper model cache
+- `~/.stt-desktop/app-errors.log` — application error log
 
-Важно:
-- В режиме IDE/консоли `.env` и `prompt.md` берутся из корня проекта.
-- В собранной версии `.env` и `prompt.md` используются из `~/.stt-desktop/`.
+Notes:
+- In IDE/console mode, `.env` and `prompt.md` are loaded from the project root.
+- In the packaged app, `.env` and `prompt.md` are loaded from `~/.stt-desktop/`.
 
-## Переменные `.env`
+## `.env` Variables
 
-- `GIGACHAT_API_KEY` — ключ API
-- `GIGACHAT_MODEL` — модель GigaChat для постобработки текста (по умолчанию `GigaChat`)
-- `HOTKEY` — горячая клавиша в формате `pynput` (пример: `<ctrl>+<cmd>+s`)
-- `PROMPT_PATH` — путь к `prompt.md` (обычно `prompt.md`)
-- `PROMPT_MODES_PATH` — путь к JSON-файлу режимов обработки (обычно `prompt_modes.json`)
-- `ACTIVE_PROMPT_MODE` — id активного режима обработки
-- `WHISPER_MODEL` — модель Whisper (`tiny` быстрее стартует, `base` точнее и используется по умолчанию)
-- `WHISPER_SSL_NO_VERIFY` — отключение SSL-проверки при загрузке модели (если нужно в корпоративной сети)
-- `GIGACHAT_SSL_NO_VERIFY` — отключение SSL-проверки для GigaChat (если нужно)
+- `GIGACHAT_API_KEY` — API key
+- `GIGACHAT_MODEL` — GigaChat model for text post-processing, defaults to `GigaChat`
+- `HOTKEY` — global hotkey in `pynput` format, for example `<ctrl>+<cmd>+s`
+- `PROMPT_PATH` — path to `prompt.md`, usually `prompt.md`
+- `PROMPT_MODES_PATH` — path to the prompt modes JSON file, usually `prompt_modes.json`
+- `ACTIVE_PROMPT_MODE` — id of the active processing mode
+- `WHISPER_MODEL` — Whisper model; `tiny` starts faster, `base` is more accurate and used by default
+- `WHISPER_SSL_NO_VERIFY` — disables SSL verification when downloading Whisper models, useful in some corporate networks
+- `GIGACHAT_SSL_NO_VERIFY` — disables SSL verification for GigaChat, useful in some corporate networks
 
-## Разрешения
+## Permissions
 
-macOS для собранного `.app`:
+macOS permissions for the packaged `.app`:
 - `System Settings -> Privacy & Security -> Microphone`
 - `System Settings -> Privacy & Security -> Accessibility`
 - `System Settings -> Privacy & Security -> Input Monitoring`
 
-Без этих разрешений запись и вставка могут не работать.
+Recording and automatic paste may not work without these permissions.
 
-## Сборка
+## Build
 
 ```bash
 python build.py
 ```
 
-На macOS сборка идет через `.spec` (с plist и правами на микрофон).
+On macOS, the build uses a `.spec` file with plist settings and microphone permissions.
