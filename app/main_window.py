@@ -19,6 +19,14 @@ class MainWindow(QtWidgets.QWidget):
         self._build_ui()
         self._apply_styles()
 
+    def closeEvent(self, event):
+        app = QtWidgets.QApplication.instance()
+        if app is not None and not getattr(app, "_stt_force_quit", False):
+            event.ignore()
+            self.hide()
+            return
+        super().closeEvent(event)
+
     def _build_ui(self):
         root_layout = QtWidgets.QVBoxLayout(self)
         root_layout.setContentsMargins(20, 18, 20, 18)

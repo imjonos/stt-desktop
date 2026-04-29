@@ -1,5 +1,6 @@
 import json
 import platform
+import subprocess
 import threading
 import time
 
@@ -37,6 +38,22 @@ class AppController(QtCore.QObject):
         self.model_loading.connect(self.window.set_start_model_loading)
         self.model_ready.connect(self.window.set_idle)
         self.toggle_requested.connect(self.toggle_recording)
+
+    def shutdown(self):
+        self._stop_hotkey()
+        if self.is_recording and self.recorder is not None:
+            try:
+                self.recorder.stop()
+            except Exception:
+                LOGGER.exception("Recorder stop failed during shutdown")
+        thread = getattr(self, "thread", None)
+        try:
+            thread_is_running = thread is not None and thread.isRunning()
+        except RuntimeError:
+            thread_is_running = False
+        if thread_is_running:
+            thread.quit()
+            thread.wait(1500)
 
     def start(self):
         self._start_hotkey()
@@ -176,7 +193,7 @@ class AppController(QtCore.QObject):
             if platform.system() == "Darwin":
                 self._activate_target_app()
                 time.sleep(0.2)
-                self._paste_with_keyboard_controller(use_cmd=True)
+                self._paste_on_macos()
             else:
                 self._paste_with_keyboard_controller(use_cmd=False)
             time.sleep(0.25)
@@ -190,8 +207,6 @@ class AppController(QtCore.QObject):
     def _get_frontmost_app_bundle_id() -> str | None:
         if platform.system() != "Darwin":
             return None
-
-        import subprocess
 
         script = (
             'tell application "System Events" to get bundle identifier of '
@@ -217,10 +232,36 @@ class AppController(QtCore.QObject):
         if not self._target_app_bundle_id:
             return
 
-        import subprocess
-
         subprocess.run(
             ["osascript", "-e", f'tell application id "{self._target_app_bundle_id}" to activate'],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
+        )
+
+    @classmethod
+    def _paste_on_macos(cls):
+        errors = []
+        paste_methods = (
+            cls._paste_with_system_events,
+            lambda: cls._paste_with_keyboard_controller(use_cmd=True),
+        )
+        for paste_method in paste_methods:
+            try:
+                paste_method()
+                return
+            except Exception as e:
+                errors.append(e)
+                LOGGER.warning("Paste method failed: %s", e)
+                time.sleep(0.1)
+        raise RuntimeError("; ".join(str(error) for error in errors))
+
+    @staticmethod
+    def _paste_with_system_events():
+        script = 'tell application "System Events" to keystroke "v" using command down'
+        subprocess.run(
+            ["osascript", "-e", script],
             capture_output=True,
             text=True,
             timeout=3,

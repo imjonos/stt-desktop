@@ -45,11 +45,11 @@ def main():
     tray = QtWidgets.QSystemTrayIcon(app_icon, window)
     menu = QtWidgets.QMenu()
     show_action = menu.addAction("Открыть")
-    show_action.triggered.connect(window.show)
+    show_action.triggered.connect(lambda _checked=False: _show_window(window))
     toggle_action = menu.addAction("Старт/Стоп запись")
     toggle_action.triggered.connect(controller.toggle_recording)
     quit_action = menu.addAction("Выход")
-    quit_action.triggered.connect(app.quit)
+    quit_action.triggered.connect(lambda _checked=False: _quit_from_tray(app, controller))
     tray.setContextMenu(menu)
     tray.setToolTip(APP_NAME)
     tray.show()
@@ -57,6 +57,18 @@ def main():
     controller.start()
 
     sys.exit(app.exec())
+
+
+def _show_window(window):
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
+
+
+def _quit_from_tray(app, controller):
+    app._stt_force_quit = True
+    controller.shutdown()
+    app.quit()
 
 
 if __name__ == "__main__":

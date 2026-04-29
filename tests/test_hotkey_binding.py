@@ -2,6 +2,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -29,6 +30,33 @@ pyside6 = types.ModuleType("PySide6")
 pyside6.QtCore = qtcore
 sys.modules.setdefault("PySide6", pyside6)
 sys.modules.setdefault("PySide6.QtCore", qtcore)
+
+
+class FakeApplication:
+    current = None
+
+    @staticmethod
+    def instance():
+        return FakeApplication.current
+
+
+class FakeWidget:
+    def __init__(self, *_args, **_kwargs):
+        self.hidden = False
+        self.super_close_called = False
+
+    def hide(self):
+        self.hidden = True
+
+    def closeEvent(self, _event):
+        self.super_close_called = True
+
+
+qtwidgets = types.ModuleType("PySide6.QtWidgets")
+qtwidgets.QApplication = FakeApplication
+qtwidgets.QWidget = FakeWidget
+pyside6.QtWidgets = qtwidgets
+sys.modules.setdefault("PySide6.QtWidgets", qtwidgets)
 
 pyperclip = types.ModuleType("pyperclip")
 pyperclip.paste = lambda: ""
@@ -75,6 +103,7 @@ sys.modules.setdefault("pynput.keyboard", keyboard)
 from app.app_controller import AppController
 from app.config_model import AppConfig, PromptMode
 from app.logging_utils import LOGGER
+from app.main_window import MainWindow
 
 LOGGER.disabled = True
 
@@ -175,6 +204,53 @@ class HotkeyBindingTest(unittest.TestCase):
         self.assertEqual(self.config.hotkey, "<ctrl>+<cmd>+s")
         self.assertEqual(self.window.status_text, "Не удалось применить новую горячую клавишу")
         self.assertFalse(self.window.status_ok)
+
+    def test_macos_paste_falls_back_to_keyboard_controller(self):
+        with (
+            mock.patch.object(AppController, "_paste_with_system_events", side_effect=RuntimeError("blocked")),
+            mock.patch.object(AppController, "_paste_with_keyboard_controller") as keyboard_paste,
+            mock.patch("app.app_controller.time.sleep"),
+        ):
+            AppController._paste_on_macos()
+
+        keyboard_paste.assert_called_once_with(use_cmd=True)
+
+
+class FakeCloseEvent:
+    def __init__(self):
+        self.ignored = False
+
+    def ignore(self):
+        self.ignored = True
+
+
+class MainWindowCloseTest(unittest.TestCase):
+    def tearDown(self):
+        FakeApplication.current = None
+
+    def test_close_hides_window_to_tray_by_default(self):
+        FakeApplication.current = types.SimpleNamespace(_stt_force_quit=False)
+        window = MainWindow.__new__(MainWindow)
+        FakeWidget.__init__(window)
+        event = FakeCloseEvent()
+
+        window.closeEvent(event)
+
+        self.assertTrue(event.ignored)
+        self.assertTrue(window.hidden)
+        self.assertFalse(window.super_close_called)
+
+    def test_close_allows_real_quit_when_requested(self):
+        FakeApplication.current = types.SimpleNamespace(_stt_force_quit=True)
+        window = MainWindow.__new__(MainWindow)
+        FakeWidget.__init__(window)
+        event = FakeCloseEvent()
+
+        window.closeEvent(event)
+
+        self.assertFalse(event.ignored)
+        self.assertFalse(window.hidden)
+        self.assertTrue(window.super_close_called)
 
 
 if __name__ == "__main__":
