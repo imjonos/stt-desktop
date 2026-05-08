@@ -7,13 +7,14 @@ from app.constants import APP_NAME
 
 class MainWindow(QtWidgets.QWidget):
     start_stop = QtCore.Signal()
+    hiding_to_tray = QtCore.Signal()
     apply_settings = QtCore.Signal(str, str, str, str, object, str)
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_NAME)
-        self.setMinimumSize(680, 460)
-        self.resize(760, 500)
+        self.setMinimumSize(680, 520)
+        self.resize(760, 580)
         self._prompt_modes = []
         self._current_prompt_mode_id = None
         self._build_ui()
@@ -23,6 +24,7 @@ class MainWindow(QtWidgets.QWidget):
         app = QtWidgets.QApplication.instance()
         if app is not None and not getattr(app, "_stt_force_quit", False):
             event.ignore()
+            self.hiding_to_tray.emit()
             self.hide()
             return
         super().closeEvent(event)

@@ -104,6 +104,7 @@ from app.app_controller import AppController
 from app.config_model import AppConfig, PromptMode
 from app.logging_utils import LOGGER
 from app.main_window import MainWindow
+from app.runtime_utils import get_default_hotkey
 
 LOGGER.disabled = True
 
@@ -123,6 +124,7 @@ class FakeLabel:
 class FakeWindow:
     def __init__(self):
         self.start_stop = FakeSignal()
+        self.hiding_to_tray = FakeSignal()
         self.apply_settings = FakeSignal()
         self.hint_label = FakeLabel()
         self.status_label = FakeLabel()
@@ -214,6 +216,20 @@ class HotkeyBindingTest(unittest.TestCase):
             AppController._paste_on_macos()
 
         keyboard_paste.assert_called_once_with(use_cmd=True)
+
+    def test_hiding_to_tray_cancels_active_recording(self):
+        recorder = mock.Mock()
+        self.controller.recorder = recorder
+        self.controller.is_recording = True
+
+        self.controller._on_window_hidden_to_tray()
+
+        recorder.stop.assert_called_once_with()
+        self.assertFalse(self.controller.is_recording)
+
+    def test_windows_default_hotkey_does_not_use_cmd(self):
+        with mock.patch("app.runtime_utils.platform.system", return_value="Windows"):
+            self.assertEqual(get_default_hotkey(), "<ctrl>+<alt>+s")
 
 
 class FakeCloseEvent:

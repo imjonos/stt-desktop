@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.config_model import AppConfig, PromptMode
-from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY
+from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY, DEFAULT_WINDOWS_HOTKEY
 
 
 DEFAULT_POLISH_PROMPT = "Сделай текст красивым и грамотным."
@@ -58,6 +58,12 @@ def resolve_app_icon_path() -> Path | None:
         if path.exists():
             return path
     return None
+
+
+def get_default_hotkey() -> str:
+    if platform.system() == "Windows":
+        return DEFAULT_WINDOWS_HOTKEY
+    return DEFAULT_HOTKEY
 
 
 def configure_bundled_ffmpeg():
@@ -183,7 +189,7 @@ def load_config() -> AppConfig:
 
     key = os.getenv("GIGACHAT_API_KEY", "").strip()
     gigachat_model = os.getenv("GIGACHAT_MODEL", DEFAULT_GIGACHAT_MODEL).strip() or DEFAULT_GIGACHAT_MODEL
-    hotkey = os.getenv("HOTKEY", DEFAULT_HOTKEY).strip()
+    hotkey = os.getenv("HOTKEY", get_default_hotkey()).strip() or get_default_hotkey()
     whisper_model = os.getenv("WHISPER_MODEL", "base").strip() or "base"
     active_prompt_mode_id = os.getenv("ACTIVE_PROMPT_MODE", "polish").strip() or "polish"
     prompt_path_value = os.getenv("PROMPT_PATH", "prompt.md").strip()

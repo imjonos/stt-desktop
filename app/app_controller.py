@@ -9,9 +9,9 @@ from PySide6 import QtCore
 from dotenv import set_key
 
 from app.config_model import AppConfig, PromptMode
-from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY
+from app.constants import DEFAULT_GIGACHAT_MODEL
 from app.logging_utils import LOGGER
-from app.runtime_utils import get_whisper_cache_dir, load_whisper_model
+from app.runtime_utils import get_default_hotkey, get_whisper_cache_dir, load_whisper_model
 
 
 class AppController(QtCore.QObject):
@@ -33,6 +33,7 @@ class AppController(QtCore.QObject):
         self._target_app_bundle_id = None
 
         self.window.start_stop.connect(self.toggle_recording)
+        self.window.hiding_to_tray.connect(self._on_window_hidden_to_tray)
         self.window.apply_settings.connect(self.save_settings)
         self.ui_error.connect(self._apply_error_to_ui)
         self.model_loading.connect(self.window.set_start_model_loading)
@@ -41,11 +42,7 @@ class AppController(QtCore.QObject):
 
     def shutdown(self):
         self._stop_hotkey()
-        if self.is_recording and self.recorder is not None:
-            try:
-                self.recorder.stop()
-            except Exception:
-                LOGGER.exception("Recorder stop failed during shutdown")
+        self._cancel_recording("shutdown")
         thread = getattr(self, "thread", None)
         try:
             thread_is_running = thread is not None and thread.isRunning()
@@ -93,7 +90,7 @@ class AppController(QtCore.QObject):
     def _start_hotkey(self, hotkey: str | None = None) -> bool:
         from pynput import keyboard
 
-        hotkey = hotkey or self.config.hotkey or DEFAULT_HOTKEY
+        hotkey = hotkey or self.config.hotkey or get_default_hotkey()
         try:
             new_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_requested.emit})
             new_listener.start()
@@ -116,6 +113,11 @@ class AppController(QtCore.QObject):
         else:
             self._stop_recording()
 
+    def _on_window_hidden_to_tray(self):
+        if self.is_recording:
+            self._cancel_recording("window hidden to tray")
+            self.window.set_idle()
+
     def _start_recording(self):
         try:
             self._target_app_bundle_id = self._get_frontmost_app_bundle_id()
@@ -131,7 +133,17 @@ class AppController(QtCore.QObject):
             self._report_error(f"Ошибка записи: {e}", with_trace=True)
 
     def _stop_recording(self):
-        audio = self.recorder.stop()
+        if self.recorder is None:
+            self.is_recording = False
+            self.window.set_idle()
+            return
+        try:
+            audio = self.recorder.stop()
+        except Exception as e:
+            self.is_recording = False
+            self._report_error(f"Ошибка остановки записи: {e}", with_trace=True)
+            self.window.set_idle()
+            return
         self.is_recording = False
         if audio is None:
             self.window.set_idle()
@@ -147,6 +159,17 @@ class AppController(QtCore.QObject):
         self.is_processing = True
         self.window.set_processing()
         self._process_audio(audio)
+
+    def _cancel_recording(self, reason: str):
+        if not self.is_recording or self.recorder is None:
+            return
+        try:
+            self.recorder.stop()
+            LOGGER.info("Recording cancelled: %s", reason)
+        except Exception:
+            LOGGER.exception("Recorder stop failed during %s", reason)
+        finally:
+            self.is_recording = False
 
     def _process_audio(self, audio):
         if self.is_audio_processing:
@@ -300,7 +323,7 @@ class AppController(QtCore.QObject):
         active_prompt_mode_id: str,
     ):
         if not hotkey:
-            hotkey = DEFAULT_HOTKEY
+            hotkey = get_default_hotkey()
         if not gigachat_model:
             gigachat_model = DEFAULT_GIGACHAT_MODEL
         if not whisper_model:

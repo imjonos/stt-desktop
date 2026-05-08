@@ -4,10 +4,10 @@ import sys
 from PySide6 import QtGui, QtWidgets
 
 from app.app_controller import AppController
-from app.constants import APP_NAME, DEFAULT_HOTKEY
+from app.constants import APP_NAME
 from app.logging_utils import LOGGER, configure_error_logging
 from app.main_window import MainWindow
-from app.runtime_utils import configure_bundled_ffmpeg, load_config, resolve_app_icon_path
+from app.runtime_utils import configure_bundled_ffmpeg, get_default_hotkey, load_config, resolve_app_icon_path
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
 
     controller = AppController(config, window)
     window.set_settings(
-        config.hotkey or DEFAULT_HOTKEY,
+        config.hotkey or get_default_hotkey(),
         config.gigachat_key,
         config.gigachat_model,
         config.whisper_model,
