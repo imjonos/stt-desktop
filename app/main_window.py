@@ -8,7 +8,7 @@ from app.constants import APP_NAME
 class MainWindow(QtWidgets.QWidget):
     start_stop = QtCore.Signal()
     hiding_to_tray = QtCore.Signal()
-    apply_settings = QtCore.Signal(str, str, str, str, object, str)
+    apply_settings = QtCore.Signal(str, str, str, str, str, str, object, str)
 
     def __init__(self):
         super().__init__()
@@ -118,16 +118,25 @@ class MainWindow(QtWidgets.QWidget):
         self.hotkey_input.setPlaceholderText("<ctrl>+<cmd>+s")
         self.hotkey_input.setMinimumWidth(260)
 
-        self.api_key_input = QtWidgets.QLineEdit()
-        self.api_key_input.setEchoMode(QtWidgets.QLineEdit.Password)
-        self.api_key_input.setPlaceholderText("GigaChat API key")
-        self.api_key_input.setMinimumWidth(280)
+        # AI Provider selection
+        self.ai_provider_combo = QtWidgets.QComboBox()
+        self.ai_provider_combo.addItem("GigaChat", "gigachat")
+        self.ai_provider_combo.addItem("OpenAI / Совместимый", "openai")
+        self.ai_provider_combo.setMinimumWidth(240)
+        self.ai_provider_combo.currentIndexChanged.connect(self._on_ai_provider_changed)
 
-        self.gigachat_model_input = QtWidgets.QComboBox()
-        self.gigachat_model_input.setEditable(True)
-        self.gigachat_model_input.addItems(["GigaChat", "GigaChat-Pro", "GigaChat-Max"])
-        self.gigachat_model_input.setCurrentText("GigaChat")
-        self.gigachat_model_input.setMinimumWidth(240)
+        self.ai_api_key_input = QtWidgets.QLineEdit()
+        self.ai_api_key_input.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.ai_api_key_input.setPlaceholderText("API ключ (может быть пустым для локального сервера)")
+        self.ai_api_key_input.setMinimumWidth(280)
+
+        self.ai_base_url_input = QtWidgets.QLineEdit()
+        self.ai_base_url_input.setPlaceholderText("https://api.openai.com/v1 (опционально)")
+        self.ai_base_url_input.setMinimumWidth(280)
+
+        self.ai_model_input = QtWidgets.QComboBox()
+        self.ai_model_input.setEditable(True)
+        self.ai_model_input.setMinimumWidth(240)
 
         self.whisper_model_input = QtWidgets.QComboBox()
         self.whisper_model_input.setEditable(True)
@@ -180,8 +189,10 @@ class MainWindow(QtWidgets.QWidget):
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
         form.addRow("Горячая клавиша", self.hotkey_input)
-        form.addRow("API ключ GigaChat", self.api_key_input)
-        form.addRow("Модель GigaChat", self.gigachat_model_input)
+        form.addRow("AI провайдер", self.ai_provider_combo)
+        form.addRow("API ключ", self.ai_api_key_input)
+        form.addRow("Базовый URL", self.ai_base_url_input)
+        form.addRow("Модель", self.ai_model_input)
         form.addRow("Модель Whisper", self.whisper_model_input)
         form.addRow("Режим", mode_row)
         form.addRow("Название режима", self.prompt_title_input)
@@ -394,10 +405,20 @@ class MainWindow(QtWidgets.QWidget):
         self.action_button.setEnabled(True)
         self.set_recording(False)
 
-    def set_settings(self, hotkey: str, api_key: str, gigachat_model: str, whisper_model: str, prompt_modes, active_prompt_mode_id: str):
+    def set_settings(
+        self,
+        hotkey: str,
+        ai_provider: str,
+        ai_api_key: str,
+        ai_base_url: str,
+        ai_model: str,
+        whisper_model: str,
+        prompt_modes,
+        active_prompt_mode_id: str,
+    ):
         self.hotkey_input.setText(hotkey)
-        self.api_key_input.setText(api_key)
-        self.gigachat_model_input.setCurrentText(gigachat_model)
+        self.ai_api_key_input.setText(ai_api_key)
+        self.ai_base_url_input.setText(ai_base_url or "")
         self.whisper_model_input.setCurrentText(whisper_model)
         self._prompt_modes = [
             {"id": mode.id, "title": mode.title, "prompt": mode.prompt}
@@ -408,9 +429,36 @@ class MainWindow(QtWidgets.QWidget):
                 {"id": "polish", "title": "Красивый текст", "prompt": "Сделай текст красивым и грамотным."}
             ]
         self._current_prompt_mode_id = active_prompt_mode_id
+
+        # Set provider combo and update model list
+        provider_index = self.ai_provider_combo.findData(ai_provider)
+        if provider_index >= 0:
+            self.ai_provider_combo.setCurrentIndex(provider_index)
+        else:
+            self.ai_provider_combo.setCurrentIndex(0)
+        self._update_ai_model_list(ai_provider)
+        self.ai_model_input.setCurrentText(ai_model)
+
         self._refresh_prompt_mode_combo(active_prompt_mode_id)
         self._load_prompt_mode_into_editor(active_prompt_mode_id)
         self.set_active_mode(self._current_prompt_mode_title())
+
+    def _on_ai_provider_changed(self, _index: int):
+        provider = self.ai_provider_combo.currentData()
+        self._update_ai_model_list(provider)
+
+    def _update_ai_model_list(self, provider: str):
+        self.ai_model_input.clear()
+        if provider == "gigachat":
+            self.ai_model_input.addItems(["GigaChat", "GigaChat-Pro", "GigaChat-Max"])
+            self.ai_model_input.setCurrentText("GigaChat")
+            self.ai_base_url_input.setEnabled(False)
+            self.ai_base_url_input.setPlaceholderText("(не используется для GigaChat)")
+        else:
+            self.ai_model_input.addItems(["gpt-4o-mini", "gpt-4o", "gpt-4", "gpt-3.5-turbo"])
+            self.ai_model_input.setCurrentText("gpt-4o-mini")
+            self.ai_base_url_input.setEnabled(True)
+            self.ai_base_url_input.setPlaceholderText("https://api.openai.com/v1 (опционально)")
 
     def set_active_mode(self, title: str):
         self.active_mode_label.setText(f"Режим: {title}")
@@ -424,8 +472,10 @@ class MainWindow(QtWidgets.QWidget):
         self._sync_current_prompt_mode_from_inputs()
         self.apply_settings.emit(
             self.hotkey_input.text().strip(),
-            self.api_key_input.text().strip(),
-            self.gigachat_model_input.currentText().strip(),
+            self.ai_provider_combo.currentData(),
+            self.ai_api_key_input.text().strip(),
+            self.ai_base_url_input.text().strip(),
+            self.ai_model_input.currentText().strip(),
             self.whisper_model_input.currentText().strip(),
             self._prompt_modes,
             self._current_prompt_mode_id or "",

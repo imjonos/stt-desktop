@@ -1,8 +1,7 @@
 import numpy as np
 from PySide6 import QtCore
-from gigachat import GigaChat
-from gigachat.models import Chat, Messages
 
+from app.ai_client import AIClientConfig, create_ai_client
 from app.config_model import AppConfig
 
 
@@ -71,14 +70,11 @@ class ProcessingWorker(QtCore.QObject):
         return "Сделай текст красивым и грамотным."
 
     def _process_text(self, prompt: str, text: str) -> str:
-        with GigaChat(credentials=self.config.gigachat_key, verify_ssl_certs=False) as giga:
-            chat = Chat(
-                model=self.config.gigachat_model,
-                messages=[
-                    Messages(role="system", content=prompt),
-                    Messages(role="user", content=text),
-                ]
-            )
-            response = giga.chat(chat)
-            print(response.choices[0].message.content.strip())
-            return response.choices[0].message.content.strip()
+        ai_config = AIClientConfig(
+            provider=self.config.ai_provider,
+            api_key=self.config.ai_api_key,
+            model=self.config.ai_model,
+            base_url=self.config.ai_base_url,
+        )
+        client = create_ai_client(ai_config)
+        return client.process_text(prompt, text)

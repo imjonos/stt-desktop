@@ -11,8 +11,16 @@ class PromptMode:
 
 @dataclass
 class AppConfig:
+    # AI API настройки
+    ai_provider: str  # "gigachat" или "openai"
+    ai_api_key: str
+    ai_model: str
+    ai_base_url: str | None  # Для OpenAI-совместимых API
+
+    # Legacy GigaChat поля для обратной совместимости
     gigachat_key: str
     gigachat_model: str
+
     hotkey: str
     whisper_model: str
     prompt_modes: list[PromptMode]

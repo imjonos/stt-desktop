@@ -9,9 +9,15 @@ from PySide6 import QtCore
 from dotenv import set_key
 
 from app.config_model import AppConfig, PromptMode
-from app.constants import DEFAULT_GIGACHAT_MODEL
+from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_OPENAI_MODEL
 from app.logging_utils import LOGGER
-from app.runtime_utils import get_default_hotkey, get_whisper_cache_dir, load_whisper_model
+from app.runtime_utils import (
+    AI_PROVIDER_GIGACHAT,
+    AI_PROVIDER_OPENAI,
+    get_default_hotkey,
+    get_whisper_cache_dir,
+    load_whisper_model,
+)
 
 
 class AppController(QtCore.QObject):
@@ -148,8 +154,9 @@ class AppController(QtCore.QObject):
         if audio is None:
             self.window.set_idle()
             return
-        if not self.config.gigachat_key:
-            self._report_error("Укажите API ключ GigaChat в настройках")
+        # API key is required for GigaChat, but can be empty for local OpenAI-compatible APIs (e.g., Ollama)
+        if not self.config.ai_api_key and self.config.ai_provider == "gigachat":
+            self._report_error("Укажите API ключ в настройках")
             self.window.set_idle()
             return
         if self.whisper_model is None:
@@ -316,16 +323,21 @@ class AppController(QtCore.QObject):
     def save_settings(
         self,
         hotkey: str,
-        api_key: str,
-        gigachat_model: str,
+        ai_provider: str,
+        ai_api_key: str,
+        ai_base_url: str,
+        ai_model: str,
         whisper_model: str,
         prompt_modes_data,
         active_prompt_mode_id: str,
     ):
         if not hotkey:
             hotkey = get_default_hotkey()
-        if not gigachat_model:
-            gigachat_model = DEFAULT_GIGACHAT_MODEL
+        if not ai_model:
+            if ai_provider == AI_PROVIDER_GIGACHAT:
+                ai_model = DEFAULT_GIGACHAT_MODEL
+            else:
+                ai_model = DEFAULT_OPENAI_MODEL
         if not whisper_model:
             whisper_model = "base"
 
@@ -335,12 +347,20 @@ class AppController(QtCore.QObject):
             prompt_modes = self._normalize_prompt_modes(prompt_modes_data)
             if not any(mode.id == active_prompt_mode_id for mode in prompt_modes):
                 active_prompt_mode_id = prompt_modes[0].id
+
             self.config.hotkey = hotkey
-            self.config.gigachat_key = api_key
-            self.config.gigachat_model = gigachat_model
+            self.config.ai_provider = ai_provider
+            self.config.ai_api_key = ai_api_key
+            self.config.ai_base_url = ai_base_url or None
+            self.config.ai_model = ai_model
             self.config.whisper_model = whisper_model
             self.config.prompt_modes = prompt_modes
             self.config.active_prompt_mode_id = active_prompt_mode_id
+
+            # Legacy migration: also update gigachat fields if using gigachat
+            if ai_provider == AI_PROVIDER_GIGACHAT:
+                self.config.gigachat_key = ai_api_key
+                self.config.gigachat_model = ai_model
 
             env_path = self.config.env_path
             env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -350,12 +370,22 @@ class AppController(QtCore.QObject):
                 env_path.write_text("", encoding="utf-8")
 
             set_key(str(env_path), "HOTKEY", hotkey)
-            set_key(str(env_path), "GIGACHAT_API_KEY", api_key)
-            set_key(str(env_path), "GIGACHAT_MODEL", gigachat_model)
+            set_key(str(env_path), "AI_PROVIDER", ai_provider)
+            set_key(str(env_path), "AI_API_KEY", ai_api_key)
+            if ai_base_url:
+                set_key(str(env_path), "AI_BASE_URL", ai_base_url)
+            else:
+                set_key(str(env_path), "AI_BASE_URL", "")
+            set_key(str(env_path), "AI_MODEL", ai_model)
             set_key(str(env_path), "WHISPER_MODEL", whisper_model)
             set_key(str(env_path), "PROMPT_PATH", "prompt.md")
             set_key(str(env_path), "PROMPT_MODES_PATH", "prompt_modes.json")
             set_key(str(env_path), "ACTIVE_PROMPT_MODE", active_prompt_mode_id)
+
+            # Keep legacy env vars for backward compatibility
+            if ai_provider == AI_PROVIDER_GIGACHAT:
+                set_key(str(env_path), "GIGACHAT_API_KEY", ai_api_key)
+                set_key(str(env_path), "GIGACHAT_MODEL", ai_model)
 
             self.config.prompt_modes_path.write_text(
                 json.dumps(

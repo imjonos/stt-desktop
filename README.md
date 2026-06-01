@@ -7,7 +7,7 @@ The core idea is simple: dictate a Telegram message, email, or note in text mode
 Cross-platform Python desktop app:
 - Global hotkey for recording
 - Local Whisper speech-to-text
-- Text post-processing with GigaChat
+- Text post-processing with AI (GigaChat, OpenAI, or any OpenAI-compatible API)
 - Multiple prompt modes for different workflows
 - Automatic paste into the active input field (Cmd+V / Ctrl+V)
 
@@ -23,14 +23,31 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-3. Run the app:
+3. Edit `.env` and set your AI provider and API key.
+
+4. Run the app:
 ```bash
 python -m app.main
 ```
 
+## AI Providers
+
+The app supports multiple AI providers for text post-processing. You can switch between them in the Settings tab.
+
+### GigaChat (default)
+- Select **GigaChat** in the provider dropdown
+- Enter your GigaChat API key
+- Choose a model: `GigaChat`, `GigaChat-Pro`, or `GigaChat-Max`
+
+### OpenAI / Compatible APIs
+- Select **OpenAI / Совместимый** in the provider dropdown
+- Enter your API key
+- Optionally set a **Base URL** if you use a custom or local endpoint (for example, Lamy, LM Studio, Ollama with OpenAI compatibility layer, or any other OpenAI-compatible service)
+- Choose or type a model name (`gpt-4o-mini`, `gpt-4o`, `gpt-4`, `gpt-3.5-turbo`, or any custom model ID)
+
 ## Prompt Modes
 
-The app supports multiple text-processing modes. Each mode is a separate system prompt for GigaChat that defines how recognized speech should be transformed before it is pasted.
+The app supports multiple text-processing modes. Each mode is a separate system prompt for the AI that defines how recognized speech should be transformed before it is pasted.
 
 Available by default:
 - `Polished text` — improves dictated text, fixes mistakes, and makes the result clean and readable. Useful for Telegram, email, notes, and any input field where you need natural text.
@@ -56,15 +73,23 @@ Notes:
 
 ## `.env` Variables
 
-- `GIGACHAT_API_KEY` — API key
+### AI Settings
+- `AI_PROVIDER` — AI provider: `gigachat` or `openai`
+- `AI_API_KEY` — unified API key (used for both GigaChat and OpenAI-compatible APIs)
+- `AI_MODEL` — model name, for example `GigaChat` or `gpt-4o-mini`
+- `AI_BASE_URL` — optional base URL for OpenAI-compatible APIs (e.g., `https://api.openai.com/v1`)
+
+### Legacy GigaChat Settings
+- `GIGACHAT_API_KEY` — GigaChat API key (used as fallback if `AI_API_KEY` is not set)
 - `GIGACHAT_MODEL` — GigaChat model for text post-processing, defaults to `GigaChat`
+
+### App Settings
 - `HOTKEY` — global hotkey in `pynput` format, for example `<ctrl>+<cmd>+s`
 - `PROMPT_PATH` — path to `prompt.md`, usually `prompt.md`
 - `PROMPT_MODES_PATH` — path to the prompt modes JSON file, usually `prompt_modes.json`
 - `ACTIVE_PROMPT_MODE` — id of the active processing mode
 - `WHISPER_MODEL` — Whisper model; `tiny` starts faster, `base` is more accurate and used by default
 - `WHISPER_SSL_NO_VERIFY` — disables SSL verification when downloading Whisper models, useful in some corporate networks
-- `GIGACHAT_SSL_NO_VERIFY` — disables SSL verification for GigaChat, useful in some corporate networks
 
 ## Permissions
 

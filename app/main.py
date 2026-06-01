@@ -35,8 +35,10 @@ def main():
     controller = AppController(config, window)
     window.set_settings(
         config.hotkey or get_default_hotkey(),
-        config.gigachat_key,
-        config.gigachat_model,
+        config.ai_provider,
+        config.ai_api_key,
+        config.ai_base_url or "",
+        config.ai_model,
         config.whisper_model,
         config.prompt_modes,
         config.active_prompt_mode_id,

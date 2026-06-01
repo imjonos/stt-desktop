@@ -12,7 +12,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.config_model import AppConfig, PromptMode
-from app.constants import DEFAULT_GIGACHAT_MODEL, DEFAULT_HOTKEY, DEFAULT_WINDOWS_HOTKEY
+from app.constants import (
+    DEFAULT_GIGACHAT_MODEL,
+    DEFAULT_HOTKEY,
+    DEFAULT_OPENAI_MODEL,
+    DEFAULT_WINDOWS_HOTKEY,
+)
 
 
 DEFAULT_POLISH_PROMPT = "Сделай текст красивым и грамотным."
@@ -21,6 +26,10 @@ DEFAULT_UNIX_PROMPT = (
     "Верни только команду без Markdown, пояснений и кавычек вокруг всего ответа. "
     "Если запрос неоднозначен, выбери самый безопасный и типичный вариант."
 )
+
+
+AI_PROVIDER_GIGACHAT = "gigachat"
+AI_PROVIDER_OPENAI = "openai"
 
 
 def get_runtime_storage_paths() -> tuple[Path, Path, Path]:
@@ -187,8 +196,27 @@ def load_config() -> AppConfig:
     env_path, default_prompt_path, default_prompt_modes_path = get_runtime_storage_paths()
     load_dotenv(dotenv_path=env_path, override=True)
 
-    key = os.getenv("GIGACHAT_API_KEY", "").strip()
+    # Определяем AI провайдера
+    ai_provider = os.getenv("AI_PROVIDER", AI_PROVIDER_GIGACHAT).strip().lower() or AI_PROVIDER_GIGACHAT
+
+    # Новые unified настройки AI
+    ai_api_key = os.getenv("AI_API_KEY", "").strip()
+    ai_model = os.getenv("AI_MODEL", "").strip()
+    ai_base_url = os.getenv("AI_BASE_URL", "").strip() or None
+
+    # Legacy GigaChat настройки
+    gigachat_key = os.getenv("GIGACHAT_API_KEY", "").strip()
     gigachat_model = os.getenv("GIGACHAT_MODEL", DEFAULT_GIGACHAT_MODEL).strip() or DEFAULT_GIGACHAT_MODEL
+
+    # Миграция: если AI_API_KEY не задан, но есть GIGACHAT_API_KEY — используем его
+    if not ai_api_key and gigachat_key:
+        ai_api_key = gigachat_key
+    if not ai_model:
+        if ai_provider == AI_PROVIDER_GIGACHAT:
+            ai_model = gigachat_model or DEFAULT_GIGACHAT_MODEL
+        else:
+            ai_model = DEFAULT_OPENAI_MODEL
+
     hotkey = os.getenv("HOTKEY", get_default_hotkey()).strip() or get_default_hotkey()
     whisper_model = os.getenv("WHISPER_MODEL", "base").strip() or "base"
     active_prompt_mode_id = os.getenv("ACTIVE_PROMPT_MODE", "polish").strip() or "polish"
@@ -210,7 +238,11 @@ def load_config() -> AppConfig:
         active_prompt_mode_id = prompt_modes[0].id
 
     return AppConfig(
-        gigachat_key=key,
+        ai_provider=ai_provider,
+        ai_api_key=ai_api_key,
+        ai_model=ai_model,
+        ai_base_url=ai_base_url,
+        gigachat_key=gigachat_key,
         gigachat_model=gigachat_model,
         hotkey=hotkey,
         whisper_model=whisper_model,
