@@ -3,3 +3,5 @@ STT Desktop.spec
 build
 dist
 app-errors.log
+.venv
+.idea
