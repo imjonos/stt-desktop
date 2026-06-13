@@ -116,3 +116,5 @@ python build.py
 
 On macOS, the build uses a `.spec` file with plist settings and microphone permissions.
 Build the Windows executable on Windows; PyInstaller does not cross-compile.
+The Windows build uses `--onedir` for reliable loading of Torch and PortAudio DLLs.
+Run `dist\\STT Desktop\\STT Desktop.exe` together with the generated folder contents.

@@ -35,8 +35,9 @@ def build():
 
     cmd = [
         'pyinstaller',
+        '--noconfirm',
         '--windowed',
-        '--onefile',
+        '--onedir' if system == 'Windows' else '--onefile',
         '--name', 'STT Desktop',
         '--collect-data', 'whisper',
         '--collect-binaries', '_sounddevice_data',
