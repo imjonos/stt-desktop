@@ -3,9 +3,9 @@ python-dotenv==1.0.1
 pynput==1.7.7
 pyperclip==1.9.0
 sounddevice==0.4.7
-soundfile==0.12.1
 numpy==1.26.4
-openai-whisper
+openai-whisper==20250625
 torch==2.2.2
-gigachat
-openai
+gigachat==0.2.0
+openai==2.38.0
+pyinstaller==6.18.0

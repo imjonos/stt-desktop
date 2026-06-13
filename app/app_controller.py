@@ -1,4 +1,5 @@
 import json
+import os
 import platform
 import subprocess
 import threading
@@ -37,6 +38,7 @@ class AppController(QtCore.QObject):
         self.whisper_model = None
         self._hotkey_listener = None
         self._target_app_bundle_id = None
+        self._target_window_handle = None
 
         self.window.start_stop.connect(self.toggle_recording)
         self.window.hiding_to_tray.connect(self._on_window_hidden_to_tray)
@@ -69,7 +71,9 @@ class AppController(QtCore.QObject):
 
             try:
                 cache_dir = get_whisper_cache_dir()
+                LOGGER.info("Loading Whisper model '%s' from %s", model_name, cache_dir)
                 self.whisper_model = load_whisper_model(model_name, cache_dir)
+                LOGGER.info("Whisper model '%s' is ready", model_name)
                 self.model_ready.emit()
             except Exception as e:
                 self._report_error(f"Ошибка загрузки Whisper: {e}", with_trace=True)
@@ -97,15 +101,23 @@ class AppController(QtCore.QObject):
         from pynput import keyboard
 
         hotkey = hotkey or self.config.hotkey or get_default_hotkey()
+        new_listener = None
         try:
             new_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_requested.emit})
             new_listener.start()
+            # Listener.start() only starts the thread. wait() also surfaces a
+            # backend initialization error, which is especially useful in a
+            # windowed PyInstaller build where stderr is not visible.
+            new_listener.wait()
         except Exception as e:
+            if new_listener is not None:
+                self._stop_hotkey(new_listener)
             self._report_error(f"Ошибка hotkey: {e}", with_trace=True)
             return False
 
         old_listener = self._hotkey_listener
         self._hotkey_listener = new_listener
+        LOGGER.info("Global hotkey registered: %s", hotkey)
         self.window.hint_label.setText(f"Горячая клавиша: {self._humanize_hotkey(hotkey)}")
         if old_listener is not None:
             self._stop_hotkey(old_listener)
@@ -127,6 +139,8 @@ class AppController(QtCore.QObject):
     def _start_recording(self):
         try:
             self._target_app_bundle_id = self._get_frontmost_app_bundle_id()
+            self._target_window_handle = self._get_foreground_window_handle()
+            LOGGER.info("Starting audio recording")
             if self.recorder is None:
                 from app.recorder import Recorder
 
@@ -164,6 +178,7 @@ class AppController(QtCore.QObject):
             self.window.set_idle()
             return
         self.is_processing = True
+        LOGGER.info("Audio captured; starting recognition")
         self.window.set_processing()
         self._process_audio(audio)
 
@@ -225,6 +240,8 @@ class AppController(QtCore.QObject):
                 time.sleep(0.2)
                 self._paste_on_macos()
             else:
+                self._activate_target_window()
+                time.sleep(0.2)
                 self._paste_with_keyboard_controller(use_cmd=False)
             time.sleep(0.25)
             return True
@@ -269,6 +286,54 @@ class AppController(QtCore.QObject):
             timeout=3,
             check=True,
         )
+
+    @staticmethod
+    def _get_foreground_window_handle() -> int | None:
+        if platform.system() != "Windows":
+            return None
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+
+        process_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if process_id.value == os.getpid():
+            return None
+        return int(hwnd)
+
+    def _activate_target_window(self):
+        if platform.system() != "Windows" or not self._target_window_handle:
+            return
+
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        if not user32.IsWindow(self._target_window_handle):
+            LOGGER.warning("Target window no longer exists: %s", self._target_window_handle)
+            return
+
+        user32.ShowWindow(self._target_window_handle, 9)  # SW_RESTORE
+        if not user32.SetForegroundWindow(self._target_window_handle):
+            LOGGER.warning(
+                "Windows refused to activate target window %s (error=%s)",
+                self._target_window_handle,
+                ctypes.get_last_error(),
+            )
 
     @classmethod
     def _paste_on_macos(cls):

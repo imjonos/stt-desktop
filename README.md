@@ -13,6 +13,9 @@ Cross-platform Python desktop app:
 
 ## Quick Start
 
+Use Python 3.11 (64-bit on Windows). This is the version used to test the
+desktop runtime and PyInstaller build.
+
 1. Install dependencies:
 ```bash
 pip install -r requirements.txt
@@ -100,6 +103,11 @@ macOS permissions for the packaged `.app`:
 
 Recording and automatic paste may not work without these permissions.
 
+On Windows, use the default `<ctrl>+<alt>+s` hotkey. The app cannot send
+`Ctrl+V` into a window running as Administrator when STT Desktop itself is
+running without elevation. Runtime diagnostics are written to
+`%USERPROFILE%\\.stt-desktop\\app-errors.log`.
+
 ## Build
 
 ```bash
@@ -107,3 +115,4 @@ python build.py
 ```
 
 On macOS, the build uses a `.spec` file with plist settings and microphone permissions.
+Build the Windows executable on Windows; PyInstaller does not cross-compile.

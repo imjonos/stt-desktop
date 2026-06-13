@@ -86,6 +86,9 @@ class FakeGlobalHotKeys:
     def start(self):
         self.started = True
 
+    def wait(self):
+        pass
+
     def stop(self):
         self.stopped = True
 
@@ -159,6 +162,10 @@ class HotkeyBindingTest(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         base = Path(self.tmpdir.name)
         self.config = AppConfig(
+            ai_provider="gigachat",
+            ai_api_key="old-key",
+            ai_model="GigaChat",
+            ai_base_url=None,
             gigachat_key="old-key",
             gigachat_model="GigaChat",
             hotkey="<ctrl>+<cmd>+s",
@@ -180,7 +187,16 @@ class HotkeyBindingTest(unittest.TestCase):
         old_listener = FakeGlobalHotKeys.instances[-1]
 
         modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
-        self.controller.save_settings("<ctrl>+<alt>+x", "new-key", "GigaChat-Pro", "base", modes, "polish")
+        self.controller.save_settings(
+            "<ctrl>+<alt>+x",
+            "gigachat",
+            "new-key",
+            "",
+            "GigaChat-Pro",
+            "base",
+            modes,
+            "polish",
+        )
         new_listener = FakeGlobalHotKeys.instances[-1]
 
         self.assertIs(self.controller._hotkey_listener, new_listener)
@@ -199,7 +215,16 @@ class HotkeyBindingTest(unittest.TestCase):
         FakeGlobalHotKeys.fail_for.add("bad-hotkey")
 
         modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
-        self.controller.save_settings("bad-hotkey", "new-key", "GigaChat-Pro", "base", modes, "polish")
+        self.controller.save_settings(
+            "bad-hotkey",
+            "gigachat",
+            "new-key",
+            "",
+            "GigaChat-Pro",
+            "base",
+            modes,
+            "polish",
+        )
 
         self.assertIs(self.controller._hotkey_listener, old_listener)
         self.assertFalse(old_listener.stopped)

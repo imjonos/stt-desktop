@@ -3,6 +3,7 @@ from PySide6 import QtCore
 
 from app.ai_client import AIClientConfig, create_ai_client
 from app.config_model import AppConfig
+from app.logging_utils import LOGGER
 
 
 class ProcessingWorker(QtCore.QObject):
@@ -25,6 +26,7 @@ class ProcessingWorker(QtCore.QObject):
             final_text = self._process_text(prompt, text)
             self.finished.emit(final_text)
         except Exception as e:
+            LOGGER.exception("Audio processing failed")
             self.error.emit(str(e))
 
     def _transcribe(self, audio: np.ndarray) -> str:

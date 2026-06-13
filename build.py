@@ -39,11 +39,20 @@ def build():
         '--onefile',
         '--name', 'STT Desktop',
         '--collect-data', 'whisper',
+        '--collect-binaries', '_sounddevice_data',
         '--add-data', f'assets{sep}assets',
         '--add-data', f'prompt.md{sep}.',
         icon_option,
-        'app/main.py'
     ]
+
+    if system == 'Windows':
+        # pynput selects its OS backend dynamically, so PyInstaller cannot
+        # reliably discover it from imports alone.
+        cmd.extend([
+            '--hidden-import', 'pynput.keyboard._win32',
+            '--hidden-import', 'pynput._util.win32',
+            '--hidden-import', 'pynput._util.win32_vks',
+        ])
 
     ffmpeg_path = shutil.which('ffmpeg')
     if ffmpeg_path and is_usable_binary(ffmpeg_path):
@@ -53,6 +62,7 @@ def build():
         print('ffmpeg not found or not usable; building without bundled ffmpeg.')
 
     cmd = [arg for arg in cmd if arg.strip()]
+    cmd.append('app/main.py')
     subprocess.run(cmd, check=True)
 
 if __name__ == '__main__':
