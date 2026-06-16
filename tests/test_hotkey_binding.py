@@ -274,6 +274,22 @@ class HotkeyBindingTest(unittest.TestCase):
 
         keyboard_paste.assert_called_once_with(use_cmd=True)
 
+    def test_windows_paste_uses_sendinput_path(self):
+        with (
+            mock.patch("app.app_controller.platform.system", return_value="Windows"),
+            mock.patch("app.app_controller.pyperclip.copy") as copy_text,
+            mock.patch.object(self.controller, "_activate_target_window") as activate_window,
+            mock.patch.object(AppController, "_paste_on_windows") as paste_windows,
+            mock.patch.object(AppController, "_paste_with_keyboard_controller") as keyboard_paste,
+            mock.patch("app.app_controller.time.sleep"),
+        ):
+            self.assertTrue(self.controller._paste_text("hello"))
+
+        copy_text.assert_called_once_with("hello")
+        activate_window.assert_called_once_with()
+        paste_windows.assert_called_once_with()
+        keyboard_paste.assert_not_called()
+
     def test_hiding_to_tray_cancels_active_recording(self):
         recorder = mock.Mock()
         self.controller.recorder = recorder

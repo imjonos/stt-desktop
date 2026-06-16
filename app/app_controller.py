@@ -255,7 +255,10 @@ class AppController(QtCore.QObject):
             else:
                 self._activate_target_window()
                 time.sleep(0.2)
-                self._paste_with_keyboard_controller(use_cmd=False)
+                if platform.system() == "Windows":
+                    self._paste_on_windows()
+                else:
+                    self._paste_with_keyboard_controller(use_cmd=False)
             time.sleep(0.25)
             return True
         except Exception as e:
@@ -375,6 +378,89 @@ class AppController(QtCore.QObject):
             timeout=3,
             check=True,
         )
+
+    @staticmethod
+    def _paste_on_windows():
+        import ctypes
+        from ctypes import wintypes
+
+        INPUT_KEYBOARD = 1
+        KEYEVENTF_KEYUP = 0x0002
+        ULONG_PTR = getattr(wintypes, "ULONG_PTR", ctypes.c_size_t)
+        VK_SHIFT = 0x10
+        VK_CONTROL = 0x11
+        VK_MENU = 0x12
+        VK_LWIN = 0x5B
+        VK_RWIN = 0x5C
+        VK_V = 0x56
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx", wintypes.LONG),
+                ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ULONG_PTR),
+            ]
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ULONG_PTR),
+            ]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
+        class INPUT_UNION(ctypes.Union):
+            _fields_ = [
+                ("mi", MOUSEINPUT),
+                ("ki", KEYBDINPUT),
+                ("hi", HARDWAREINPUT),
+            ]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [
+                ("type", wintypes.DWORD),
+                ("union", INPUT_UNION),
+            ]
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+        user32.SendInput.restype = wintypes.UINT
+
+        def key_input(vk: int, flags: int = 0) -> INPUT:
+            return INPUT(
+                type=INPUT_KEYBOARD,
+                union=INPUT_UNION(ki=KEYBDINPUT(vk, 0, flags, 0, 0)),
+            )
+
+        release_modifiers = [
+            key_input(VK_SHIFT, KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+            key_input(VK_MENU, KEYEVENTF_KEYUP),
+            key_input(VK_LWIN, KEYEVENTF_KEYUP),
+            key_input(VK_RWIN, KEYEVENTF_KEYUP),
+        ]
+        inputs = (INPUT * 14)(
+            *release_modifiers,
+            key_input(VK_CONTROL),
+            key_input(VK_V),
+            key_input(VK_V, KEYEVENTF_KEYUP),
+            key_input(VK_CONTROL, KEYEVENTF_KEYUP),
+            *release_modifiers,
+        )
+        sent = user32.SendInput(len(inputs), inputs, ctypes.sizeof(INPUT))
+        if sent != len(inputs):
+            raise ctypes.WinError(ctypes.get_last_error())
 
     @staticmethod
     def _paste_with_keyboard_controller(use_cmd: bool):
