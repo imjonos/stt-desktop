@@ -2,6 +2,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 
 
 def is_usable_binary(binary_path):
@@ -34,7 +35,9 @@ def build():
         icon_option = '--icon=assets/icon.icns'
 
     cmd = [
-        'pyinstaller',
+        sys.executable,
+        '-m',
+        'PyInstaller',
         '--noconfirm',
         '--windowed',
         '--onedir' if system == 'Windows' else '--onefile',

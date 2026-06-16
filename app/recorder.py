@@ -1,4 +1,5 @@
 import multiprocessing
+import platform
 import time
 import traceback
 
@@ -18,6 +19,7 @@ class Recorder:
         self.channels = channels
         self._process = None
         self._connection = None
+        self._stop_event = None
         self._recording = False
 
     def start(self):
@@ -25,10 +27,12 @@ class Recorder:
             return
 
         context = multiprocessing.get_context("spawn")
-        parent_connection, child_connection = context.Pipe()
+        use_stop_event = platform.system() == "Windows"
+        parent_connection, child_connection = context.Pipe(duplex=not use_stop_event)
+        stop_event = context.Event() if use_stop_event else None
         process = context.Process(
             target=_recording_process,
-            args=(child_connection, self.target_samplerate, self.channels),
+            args=(child_connection, stop_event, self.target_samplerate, self.channels),
             name="stt-audio-recorder",
         )
         process.start()
@@ -36,6 +40,7 @@ class Recorder:
 
         self._process = process
         self._connection = parent_connection
+        self._stop_event = stop_event
         try:
             message = self._receive_message(START_TIMEOUT_SECONDS, "запуска микрофона")
             if message[0] != "ready":
@@ -53,7 +58,10 @@ class Recorder:
 
         self._recording = False
         try:
-            self._connection.send("stop")
+            if self._stop_event is not None:
+                self._stop_event.set()
+            else:
+                self._connection.send("stop")
             message = self._receive_message(STOP_TIMEOUT_SECONDS, "остановки микрофона")
             if message[0] == "error":
                 raise RuntimeError(message[1])
@@ -87,6 +95,7 @@ class Recorder:
         connection = self._connection
         self._process = None
         self._connection = None
+        self._stop_event = None
 
         if process is not None:
             process.join(timeout=1)
@@ -98,8 +107,23 @@ class Recorder:
             connection.close()
 
 
-def _recording_process(connection, target_samplerate: int, channels: int):
+def _recording_process(connection, stop_event, target_samplerate: int, channels: int):
     enable_native_crash_logging("audio-crash.log")
+    if platform.system() == "Windows":
+        try:
+            _recording_process_winmm(connection, stop_event, target_samplerate, channels)
+            return
+        except BaseException:
+            try:
+                connection.send(("error", traceback.format_exc()))
+            except Exception:
+                pass
+            try:
+                connection.close()
+            except Exception:
+                pass
+            return
+
     stream = None
     try:
         # Importing sounddevice loads the native PortAudio library. Keeping it
@@ -144,7 +168,11 @@ def _recording_process(connection, target_samplerate: int, channels: int):
 
         connection.send(("ready", actual_samplerate))
         while True:
-            if connection.poll(0.1) and connection.recv() == "stop":
+            if stop_event is not None:
+                if stop_event.is_set():
+                    break
+                time.sleep(0.1)
+            elif connection.poll(0.1) and connection.recv() == "stop":
                 break
 
         stream.stop()
@@ -182,6 +210,197 @@ def _candidate_samplerates(sounddevice, target_samplerate: int):
     except Exception:
         pass
     return list(dict.fromkeys(rate for rate in candidates if rate > 0))
+
+
+def _recording_process_winmm(connection, stop_event, target_samplerate: int, channels: int):
+    import ctypes
+    from ctypes import wintypes
+
+    if channels != 1:
+        raise RuntimeError("Windows recorder supports mono input only")
+
+    winmm = ctypes.WinDLL("winmm")
+    CALLBACK_NULL = 0
+    WAVE_FORMAT_PCM = 1
+    WAVE_MAPPER = 0xFFFFFFFF
+    WHDR_DONE = 0x00000001
+    MMSYSERR_NOERROR = 0
+
+    class WAVEFORMATEX(ctypes.Structure):
+        _fields_ = [
+            ("wFormatTag", wintypes.WORD),
+            ("nChannels", wintypes.WORD),
+            ("nSamplesPerSec", wintypes.DWORD),
+            ("nAvgBytesPerSec", wintypes.DWORD),
+            ("nBlockAlign", wintypes.WORD),
+            ("wBitsPerSample", wintypes.WORD),
+            ("cbSize", wintypes.WORD),
+        ]
+
+    class WAVEHDR(ctypes.Structure):
+        _fields_ = [
+            ("lpData", ctypes.c_void_p),
+            ("dwBufferLength", wintypes.DWORD),
+            ("dwBytesRecorded", wintypes.DWORD),
+            ("dwUser", ctypes.c_size_t),
+            ("dwFlags", wintypes.DWORD),
+            ("dwLoops", wintypes.DWORD),
+            ("lpNext", ctypes.c_void_p),
+            ("reserved", ctypes.c_size_t),
+        ]
+
+    winmm.waveInOpen.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        wintypes.UINT,
+        ctypes.POINTER(WAVEFORMATEX),
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        wintypes.DWORD,
+    ]
+    winmm.waveInOpen.restype = wintypes.UINT
+    winmm.waveInPrepareHeader.argtypes = [ctypes.c_void_p, ctypes.POINTER(WAVEHDR), wintypes.UINT]
+    winmm.waveInPrepareHeader.restype = wintypes.UINT
+    winmm.waveInAddBuffer.argtypes = [ctypes.c_void_p, ctypes.POINTER(WAVEHDR), wintypes.UINT]
+    winmm.waveInAddBuffer.restype = wintypes.UINT
+    winmm.waveInStart.argtypes = [ctypes.c_void_p]
+    winmm.waveInStart.restype = wintypes.UINT
+    winmm.waveInStop.argtypes = [ctypes.c_void_p]
+    winmm.waveInStop.restype = wintypes.UINT
+    winmm.waveInReset.argtypes = [ctypes.c_void_p]
+    winmm.waveInReset.restype = wintypes.UINT
+    winmm.waveInUnprepareHeader.argtypes = [ctypes.c_void_p, ctypes.POINTER(WAVEHDR), wintypes.UINT]
+    winmm.waveInUnprepareHeader.restype = wintypes.UINT
+    winmm.waveInClose.argtypes = [ctypes.c_void_p]
+    winmm.waveInClose.restype = wintypes.UINT
+    winmm.waveInGetErrorTextW.argtypes = [wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+    winmm.waveInGetErrorTextW.restype = wintypes.UINT
+
+    def raise_if_error(result: int, operation: str):
+        if result == MMSYSERR_NOERROR:
+            return
+        message = ctypes.create_unicode_buffer(256)
+        winmm.waveInGetErrorTextW(result, message, len(message))
+        detail = message.value or f"WinMM error {result}"
+        raise RuntimeError(f"{operation}: {detail}")
+
+    def make_format(samplerate: int):
+        bits_per_sample = 16
+        block_align = channels * bits_per_sample // 8
+        return WAVEFORMATEX(
+            WAVE_FORMAT_PCM,
+            channels,
+            samplerate,
+            samplerate * block_align,
+            block_align,
+            bits_per_sample,
+            0,
+        )
+
+    handle = ctypes.c_void_p()
+    actual_samplerate = None
+    open_errors = []
+    for samplerate in _candidate_winmm_samplerates(target_samplerate):
+        fmt = make_format(samplerate)
+        result = winmm.waveInOpen(
+            ctypes.byref(handle),
+            WAVE_MAPPER,
+            ctypes.byref(fmt),
+            0,
+            0,
+            CALLBACK_NULL,
+        )
+        if result == MMSYSERR_NOERROR:
+            actual_samplerate = samplerate
+            break
+        message = ctypes.create_unicode_buffer(256)
+        winmm.waveInGetErrorTextW(result, message, len(message))
+        open_errors.append(f"{samplerate} Hz: {message.value or result}")
+
+    if actual_samplerate is None:
+        raise RuntimeError("Не удалось открыть микрофон через WinMM. " + " | ".join(open_errors))
+
+    header_size = ctypes.sizeof(WAVEHDR)
+    buffer_count = 8
+    buffer_milliseconds = 100
+    bytes_per_sample = 2
+    buffer_size = max(
+        1024,
+        int(actual_samplerate * channels * bytes_per_sample * buffer_milliseconds / 1000),
+    )
+    buffers = [ctypes.create_string_buffer(buffer_size) for _ in range(buffer_count)]
+    headers = []
+    frames = []
+
+    try:
+        for buffer in buffers:
+            header = WAVEHDR(
+                ctypes.cast(buffer, ctypes.c_void_p),
+                buffer_size,
+                0,
+                0,
+                0,
+                0,
+                None,
+                0,
+            )
+            raise_if_error(winmm.waveInPrepareHeader(handle, ctypes.byref(header), header_size), "waveInPrepareHeader")
+            raise_if_error(winmm.waveInAddBuffer(handle, ctypes.byref(header), header_size), "waveInAddBuffer")
+            headers.append(header)
+
+        raise_if_error(winmm.waveInStart(handle), "waveInStart")
+        connection.send(("ready", actual_samplerate))
+
+        should_stop = False
+        while not should_stop:
+            should_stop = stop_event.is_set()
+            for index, header in enumerate(headers):
+                if header.dwFlags & WHDR_DONE:
+                    if header.dwBytesRecorded:
+                        frames.append(bytes(buffers[index].raw[: header.dwBytesRecorded]))
+                    header.dwBytesRecorded = 0
+                    header.dwFlags &= ~WHDR_DONE
+                    if not should_stop:
+                        raise_if_error(winmm.waveInAddBuffer(handle, ctypes.byref(header), header_size), "waveInAddBuffer")
+            if not should_stop:
+                time.sleep(0.01)
+
+        winmm.waveInStop(handle)
+        winmm.waveInReset(handle)
+
+        for index, header in enumerate(headers):
+            if header.dwBytesRecorded:
+                frames.append(bytes(buffers[index].raw[: header.dwBytesRecorded]))
+                header.dwBytesRecorded = 0
+
+        if not frames:
+            connection.send(("audio", None))
+            return
+
+        raw_audio = b"".join(frames)
+        audio = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
+        audio = audio.reshape(-1, channels)
+        audio = _resample_to_target(audio, actual_samplerate, target_samplerate)
+        connection.send(("audio", audio))
+    finally:
+        if handle.value:
+            try:
+                winmm.waveInReset(handle)
+            except Exception:
+                pass
+            for header in headers:
+                try:
+                    winmm.waveInUnprepareHeader(handle, ctypes.byref(header), header_size)
+                except Exception:
+                    pass
+            try:
+                winmm.waveInClose(handle)
+            except Exception:
+                pass
+        connection.close()
+
+
+def _candidate_winmm_samplerates(target_samplerate: int):
+    return list(dict.fromkeys(rate for rate in (target_samplerate, 44100, 48000) if rate > 0))
 
 
 def _resample_to_target(audio: np.ndarray, samplerate: int, target_samplerate: int) -> np.ndarray:

@@ -98,12 +98,13 @@ class AppController(QtCore.QObject):
             LOGGER.exception("Hotkey listener stop failed: %s", e)
 
     def _start_hotkey(self, hotkey: str | None = None) -> bool:
-        from pynput import keyboard
+        from app.hotkey_listener import create_hotkey_listener
 
         hotkey = hotkey or self.config.hotkey or get_default_hotkey()
         new_listener = None
         try:
-            new_listener = keyboard.GlobalHotKeys({hotkey: self.toggle_requested.emit})
+            callback = self._on_global_hotkey if platform.system() == "Windows" else self.toggle_requested.emit
+            new_listener = create_hotkey_listener(hotkey, callback)
             new_listener.start()
             # Listener.start() only starts the thread. wait() also surfaces a
             # backend initialization error, which is especially useful in a
@@ -122,6 +123,18 @@ class AppController(QtCore.QObject):
         if old_listener is not None:
             self._stop_hotkey(old_listener)
         return True
+
+    @QtCore.Slot()
+    def _emit_toggle_requested(self):
+        self.toggle_requested.emit()
+
+    def _on_global_hotkey(self):
+        LOGGER.info("Global hotkey pressed")
+        QtCore.QMetaObject.invokeMethod(
+            self,
+            "_emit_toggle_requested",
+            QtCore.Qt.ConnectionType.QueuedConnection,
+        )
 
     def toggle_recording(self):
         if self.is_processing:

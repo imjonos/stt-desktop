@@ -20,12 +20,38 @@ class FakeSignal:
 
 class FakeQObject:
     def __init__(self, *_args, **_kwargs):
-        pass
+        for cls in reversed(type(self).mro()):
+            for name, value in cls.__dict__.items():
+                if isinstance(value, FakeSignal):
+                    setattr(self, name, FakeSignal())
 
 
 qtcore = types.ModuleType("PySide6.QtCore")
 qtcore.QObject = FakeQObject
 qtcore.Signal = FakeSignal
+qtcore.Slot = lambda *_args, **_kwargs: (lambda func: func)
+
+
+class FakeConnectionType:
+    QueuedConnection = object()
+
+
+class FakeQt:
+    ConnectionType = FakeConnectionType
+
+
+class FakeQMetaObject:
+    calls = []
+
+    @staticmethod
+    def invokeMethod(receiver, method_name, connection_type):
+        FakeQMetaObject.calls.append((receiver, method_name, connection_type))
+        getattr(receiver, method_name)()
+        return True
+
+
+qtcore.Qt = FakeQt
+qtcore.QMetaObject = FakeQMetaObject
 pyside6 = types.ModuleType("PySide6")
 pyside6.QtCore = qtcore
 sys.modules.setdefault("PySide6", pyside6)
@@ -69,15 +95,15 @@ dotenv.set_key = lambda *_args, **_kwargs: None
 sys.modules.setdefault("dotenv", dotenv)
 
 
-class FakeGlobalHotKeys:
+class FakeHotkeyListener:
     instances = []
     fail_for = set()
 
-    def __init__(self, hotkeys):
-        self.hotkey = next(iter(hotkeys))
+    def __init__(self, hotkey, callback):
+        self.hotkey = hotkey
         if self.hotkey in self.fail_for:
             raise ValueError(self.hotkey)
-        self.callback = hotkeys[self.hotkey]
+        self.callback = callback
         self.started = False
         self.stopped = False
         self.join_timeout = None
@@ -95,13 +121,6 @@ class FakeGlobalHotKeys:
     def join(self, timeout=None):
         self.join_timeout = timeout
 
-
-keyboard = types.ModuleType("pynput.keyboard")
-keyboard.GlobalHotKeys = FakeGlobalHotKeys
-pynput = types.ModuleType("pynput")
-pynput.keyboard = keyboard
-sys.modules.setdefault("pynput", pynput)
-sys.modules.setdefault("pynput.keyboard", keyboard)
 
 from app.app_controller import AppController
 from app.config_model import AppConfig, PromptMode
@@ -154,11 +173,23 @@ class FakeWindow:
     def set_active_mode(self, title):
         self.active_mode = title
 
+    def set_recording(self, *_args):
+        pass
+
+    def clear_error_text(self):
+        self.error_text = ""
+
 
 class HotkeyBindingTest(unittest.TestCase):
     def setUp(self):
-        FakeGlobalHotKeys.instances.clear()
-        FakeGlobalHotKeys.fail_for.clear()
+        FakeHotkeyListener.instances.clear()
+        FakeHotkeyListener.fail_for.clear()
+        FakeQMetaObject.calls.clear()
+        self.hotkey_factory = mock.patch(
+            "app.hotkey_listener.create_hotkey_listener",
+            side_effect=lambda hotkey, callback: FakeHotkeyListener(hotkey, callback),
+        )
+        self.hotkey_factory.start()
         self.tmpdir = tempfile.TemporaryDirectory()
         base = Path(self.tmpdir.name)
         self.config = AppConfig(
@@ -180,11 +211,12 @@ class HotkeyBindingTest(unittest.TestCase):
         self.controller = AppController(self.config, self.window)
 
     def tearDown(self):
+        self.hotkey_factory.stop()
         self.tmpdir.cleanup()
 
     def test_rebinds_hotkey_immediately_and_stops_old_listener(self):
         self.assertTrue(self.controller._start_hotkey())
-        old_listener = FakeGlobalHotKeys.instances[-1]
+        old_listener = FakeHotkeyListener.instances[-1]
 
         modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
         self.controller.save_settings(
@@ -197,7 +229,7 @@ class HotkeyBindingTest(unittest.TestCase):
             modes,
             "polish",
         )
-        new_listener = FakeGlobalHotKeys.instances[-1]
+        new_listener = FakeHotkeyListener.instances[-1]
 
         self.assertIs(self.controller._hotkey_listener, new_listener)
         self.assertTrue(new_listener.started)
@@ -211,8 +243,8 @@ class HotkeyBindingTest(unittest.TestCase):
 
     def test_failed_rebind_keeps_existing_listener_and_old_hotkey(self):
         self.assertTrue(self.controller._start_hotkey())
-        old_listener = FakeGlobalHotKeys.instances[-1]
-        FakeGlobalHotKeys.fail_for.add("bad-hotkey")
+        old_listener = FakeHotkeyListener.instances[-1]
+        FakeHotkeyListener.fail_for.add("bad-hotkey")
 
         modes = [{"id": "polish", "title": "Красивый текст", "prompt": "Prompt"}]
         self.controller.save_settings(
@@ -255,6 +287,29 @@ class HotkeyBindingTest(unittest.TestCase):
     def test_windows_default_hotkey_does_not_use_cmd(self):
         with mock.patch("app.runtime_utils.platform.system", return_value="Windows"):
             self.assertEqual(get_default_hotkey(), "<ctrl>+<alt>+s")
+
+    def test_hotkey_callback_dispatches_toggle_on_qt_thread(self):
+        with mock.patch("app.app_controller.platform.system", return_value="Windows"):
+            self.assertTrue(self.controller._start_hotkey())
+        listener = FakeHotkeyListener.instances[-1]
+
+        with mock.patch.object(self.controller, "_start_recording") as start_recording:
+            listener.callback()
+
+        start_recording.assert_called_once_with()
+        self.assertEqual(FakeQMetaObject.calls[-1][0], self.controller)
+        self.assertEqual(FakeQMetaObject.calls[-1][1], "_emit_toggle_requested")
+
+    def test_macos_hotkey_keeps_direct_signal_callback(self):
+        with mock.patch("app.app_controller.platform.system", return_value="Darwin"):
+            self.assertTrue(self.controller._start_hotkey())
+        listener = FakeHotkeyListener.instances[-1]
+
+        with mock.patch.object(self.controller, "_start_recording") as start_recording:
+            listener.callback()
+
+        start_recording.assert_called_once_with()
+        self.assertEqual(FakeQMetaObject.calls, [])
 
 
 class FakeCloseEvent:

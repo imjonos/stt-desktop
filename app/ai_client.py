@@ -56,10 +56,14 @@ class OpenAIClient(AIClient):
 
     def process_text(self, prompt: str, text: str) -> str:
         client_kwargs: dict = {}
-        if self.config.api_key:
-            client_kwargs["api_key"] = self.config.api_key
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
+        if self.config.api_key:
+            client_kwargs["api_key"] = self.config.api_key
+        elif self.config.base_url:
+            # The OpenAI SDK requires a non-empty key even for local
+            # OpenAI-compatible servers such as Ollama.
+            client_kwargs["api_key"] = "local-openai-compatible"
 
         client = self._OpenAI(**client_kwargs)
         response = client.chat.completions.create(
